@@ -18,6 +18,7 @@
 # Ignore pictures because high definition is too large
 *.png
 *.svg
+*.jpg
 
 # Ignore auxiliary tex files
 *.aux
