@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 
 def PlotImage(Image,TicksSize,ColorBar=False):
 
-
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
     CMap = Axes.imshow(Image, cmap='bone_r',vmax=15)
     Axes.set_xlim([0, Image.shape[1]])
