@@ -1,10 +1,10 @@
 """
 This script aims to test different Pulse-Coupled Neural Network (PCNN) algorithm
 Based on :
-Zhan, K., Shi, J., Wang, H. et al.
-Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
-Arch Computat Methods Eng 24, 573–588 (2017).
-https://doi.org/10.1007/s11831-016-9182-3
+Hage, I., Hamade, R. (2015)
+Automatic Detection of Cortical Bones Haversian Osteonal Boundaries.
+AIMS Medical Science, 2(4), 328–346.
+https://doi.org/10.3934/medsci.2015.4.328
 """
 
 import os
@@ -29,35 +29,45 @@ Input = np.ones((256, 256)) * 230
 Input[64:192, 64:192] = 205
 Input[:, 128:] = np.round(Input[:, 128:] * 0.5)
 
-# import SimpleITK as sitk
-# Input_Image = sitk.ReadImage(DataDirectory + 'Toluidinblue_protocol2A_20.jpg')
-# Input_Array = sitk.GetArrayFromImage(Input_Image)
-# Input = Input_Array[2000:2500,2000:2500,2]
+import SimpleITK as sitk
+Input_Image = sitk.ReadImage(DataDirectory + 'Toluidinblue_protocol2A_20.jpg')
+Input_Array = sitk.GetArrayFromImage(Input_Image)
+Input = Input_Array[2000:2500,2000:2500,2]
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(Input,cmap='gray',vmin=0,vmax=255)
 plt.axis('off')
 plt.title('Input')
 plt.show()
+plt.close(Figure)
 
-# Algorithm 5, image segmentation - Initialization
+# Particle Swarm Optimization (PSO) algorithm
+Ps = 20         # Population size
+t = 0           # Iteration number
+Max_times = 5   # Max iteration number
+Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
+Average_FV = 0.99   # Second PSO termination condition
+
+
+
+# Pulse-Connected Neural Network (PCNN) algorithm
 S = Input
 
 Rows, Columns = S.shape
 Y = np.zeros((Rows, Columns))
 T = np.zeros((Rows, Columns))
-W = GaussianKernel(Length=7, Sigma=1.)
+W = np.array([[0.5, 1, 0.5],[1, 0, 1],[0.5, 1, 0.5]])
 
 ## Feeding input
 F = S
 AlphaF = 0.2754
 VF = -0.5186
-WF =
+WF = W
 
 ## Linking input
 AlphaL = -0.0851
 VL = -0.42187
-WL =
+WL = W
 
 # Linking part
 Beta = -0.4904
@@ -99,3 +109,4 @@ Axes.imshow(Output,cmap='gray',vmin=0,vmax=255)
 plt.axis('off')
 plt.title('Output')
 plt.show()
+plt.close(Figure)
