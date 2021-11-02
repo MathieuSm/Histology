@@ -50,7 +50,7 @@ Vt = 400
 FiredNumber = 0
 N = 0
 
-while FiredNumber < Rows * Columns:
+while FiredNumber < S.size:
 
     N += 1
     L = correlate(Y, W, output='float', mode='reflect')

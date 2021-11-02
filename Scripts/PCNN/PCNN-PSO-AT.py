@@ -25,8 +25,29 @@ def RGB2Gray(RGBImage):
 
     R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
     Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
+    Normalized_Gray = Gray / Gray.max()
 
-    return Gray
+    return Normalized_Gray
+def BetweenClassVariance(GrayScale, Segmented):
+
+    Ignited_Neurons = Segmented == 1
+
+    N0 = np.sum(~Ignited_Neurons)
+    N1 = np.sum(Ignited_Neurons)
+
+    if N0 == 0 or N1 == 0:
+        Vb = 0
+
+    else:
+        w0 = N0 / Segmented.size
+        w1 = N1 / Segmented.size
+
+        u0 = GrayScale[~Ignited_Neurons].mean()
+        u1 = GrayScale[Ignited_Neurons].mean()
+
+        Vb = w0 * w1 * (u0 - u1) ** 2
+
+    return Vb
 def GaussianKernel(Length=5, Sigma=1.):
     """
     Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
@@ -35,7 +56,7 @@ def GaussianKernel(Length=5, Sigma=1.):
     Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
     Kernel = np.outer(Gauss, Gauss)
     return Kernel / sum(sum(Kernel))
-def PCNN_Segmentation(Image,ParametersDictionary,IterationNumber=5):
+def PCNN_Segmentation(Image,ParametersDictionary,MaxIteration=10):
 
     # Initialization
     AlphaF = ParametersDictionary['AlphaF']
@@ -49,11 +70,13 @@ def PCNN_Segmentation(Image,ParametersDictionary,IterationNumber=5):
     Beta = ParametersDictionary['Beta']
 
     # Input parameters
-    S = Image / Image.max() * 255
+    S = Image / Image.max()
 
     Rows, Columns = S.shape
     Y = np.zeros((Rows, Columns))
-    W = GaussianKernel(1, 1)
+    Vb, New_Vb = 0, 0
+    # W = GaussianKernel(1, 1)
+    W = np.array([[0.5,1,0.5],[1,0,1],[0.5,1,0.5]])
 
     ## Feeding input
     F = S
@@ -64,19 +87,27 @@ def PCNN_Segmentation(Image,ParametersDictionary,IterationNumber=5):
     WL = W
 
     # Dynamic threshold
-    Theta = 255 * np.ones((Rows, Columns))
+    Theta = np.ones((Rows, Columns))
 
     N = 0
-    for Iteration in range(IterationNumber):
+    while New_Vb >= Vb and N < MaxIteration:
 
         N += 1
         F = S + F * np.exp(-AlphaF) + VF * correlate(Y, WF, output='float', mode='reflect')
         L = L * np.exp(-AlphaL) + VL * correlate(Y, WL, output='float', mode='reflect')
         U = F * (1 + Beta*L)
-        Y = (U > Theta) * 1
-        Theta = Theta * np.exp(-AlphaT) + VT * Y
 
-    return Y
+        Theta = Theta * np.exp(-AlphaT) + VT * Y
+        Y = (U > Theta) * 1
+
+        # Update variance
+        Vb = New_Vb
+        New_Vb = BetweenClassVariance(S, Y)
+
+        if New_Vb >= Vb:
+            Best_Y = Y
+
+    return Best_Y
 def PlotResults(Image, Threshold):
     Segmented_Image = Image / Image.max()
     Segmented_Image[Segmented_Image < Threshold] = 0
@@ -90,20 +121,57 @@ def PlotResults(Image, Threshold):
     plt.close(Figure)
 
     return
+def Mutual_Information(Image1, Image2):
+
+    """ Mutual information for joint histogram """
+
+    Hist2D = np.histogram2d(Image1.ravel(), Image2.ravel(), bins=20)[0]
+
+    # Convert bins counts to probability values
+    pxy = Hist2D / float(np.sum(Hist2D))
+    px = np.sum(pxy, axis=1) # marginal for x over y
+    py = np.sum(pxy, axis=0) # marginal for y over x
+    px_py = px[:, None] * py[None, :] # Broadcast to multiply marginals
+
+    # Now we can do the calculation using the pxy, px_py 2D arrays
+    nzs = pxy > 0 # Only non-zero pxy values contribute to the sum
+
+    return np.sum(pxy[nzs] * np.log(pxy[nzs] / px_py[nzs]))
 
 
 CurrentDirectory = os.getcwd()
 DataDirectory = os.path.join(CurrentDirectory,'Scripts/PCNN/')
 
 # Read input
-Input_Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
-Input_Array = sitk.GetArrayFromImage(Input_Image)
-Input = RGB2Gray(Input_Array)
+Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
+RGB_Array = sitk.GetArrayFromImage(Image)
+GrayScale_Array = RGB2Gray(RGB_Array)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Input,cmap='gray',vmin=0,vmax=255)
+Axes.imshow(GrayScale_Array,cmap='gray',vmin=0,vmax=1)
 plt.axis('off')
 plt.title('Input')
+plt.show()
+plt.close(Figure)
+
+
+# Compute best threshold
+OtsuFilter = sitk.OtsuThresholdImageFilter()
+OtsuFilter.SetInsideValue(1)
+OtsuFilter.SetOutsideValue(0)
+OtsuFilter.Execute(sitk.GetImageFromArray(GrayScale_Array))
+Best_Threshold = OtsuFilter.GetThreshold()
+
+Segmented_Array = GrayScale_Array.copy()
+Segmented_Array[Segmented_Array < Best_Threshold] = 0
+Segmented_Array[Segmented_Array >= Best_Threshold] = 1
+
+Best_Vb = BetweenClassVariance(GrayScale_Array, Segmented_Array)
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(Segmented_Array,cmap='gray',vmin=0,vmax=1)
+plt.axis('off')
+plt.title('Otsu segmentation')
 plt.show()
 plt.close(Figure)
 
@@ -118,17 +186,16 @@ Average_FV = 0.99   # Second PSO termination condition
 
 
 
-
 # PSO step 1 - Initialization
-AlphaF_Range = [-10,10]
-AlphaL_Range = [-10,10]
-AlphaT_Range = [-10,10]
+AlphaF_Range = [-1,1]
+AlphaL_Range = [-1,1]
+AlphaT_Range = [-1,1]
 
-VF_Range = [-10,10]
-VL_Range = [-10,10]
-VT_Range = [-255,255]
+VF_Range = [-1,1]
+VL_Range = [-1,1]
+VT_Range = [-1,1]
 
-Beta_Range = [-10,10]
+Beta_Range = [-1,1]
 
 Ranges = np.array([AlphaF_Range,AlphaL_Range,AlphaT_Range,
                    VF_Range,VL_Range,VT_Range,Beta_Range])
@@ -153,7 +220,7 @@ for ParticleNumber in range(Ps):
         ParameterValue = X[ParticleNumber,ParameterNumber]
         ParametersDictionary[ParameterName] = ParameterValue
 
-    Y = PCNN_Segmentation(Input,ParametersDictionary,IterationNumber=5)
+    Y = PCNN_Segmentation(GrayScale_Array,ParametersDictionary)
 
     # Compute entropy and store it
     N0 = np.count_nonzero(Y == 0)
@@ -203,19 +270,19 @@ while NIteration < 100 and Average_FVs.mean() <= Average_FV:
             ParameterValue = X[ParticleNumber,ParameterNumber]
             ParametersDictionary[ParameterName] = ParameterValue
 
-        Y = PCNN_Segmentation(Input,ParametersDictionary,IterationNumber=5)
+        Y = PCNN_Segmentation(GrayScale_Array,ParametersDictionary)
 
         # Compute entropy and store it
         N0 = np.count_nonzero(Y == 0)
         N1 = np.count_nonzero(Y == 1)
-        P1 = N0 / Y.size
-        P2 = N1 / Y.size
-        if P1 == 0:
-            H = - P2 * np.log2(P2)
-        elif P2 == 0:
-            H = -P1 * np.log2(P1)
+        P0 = N0 / Y.size
+        P1 = N1 / Y.size
+        if P0 == 0:
+            H = - P1 * np.log2(P1)
+        elif P1 == 0:
+            H = -P0 * np.log2(P0)
         else:
-            H = -P1 * np.log2(P1) - P2 * np.log2(P2)
+            H = -P1 * np.log2(P1) - P0 * np.log2(P0)
 
         NewEntropies[ParticleNumber,0] = H
 
@@ -244,7 +311,11 @@ for ParameterNumber in range(Dimensions):
     ParameterName = ParameterList[ParameterNumber]
     ParameterValue = G_Best[ParameterNumber]
     ParametersDictionary[ParameterName] = ParameterValue
-Y = PCNN_Segmentation(Input,ParametersDictionary,IterationNumber=5)
+Y = PCNN_Segmentation(GrayScale_Array,ParametersDictionary)
+
+Vb = BetweenClassVariance(GrayScale_Array,Y)
+
+print('Obtained variance / Otsu variance: %.3f'%(Vb/Best_Vb))
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(Y,cmap='gray')
@@ -252,3 +323,9 @@ plt.axis('off')
 plt.title('Segmented Image')
 plt.show()
 plt.close(Figure)
+
+PCNN_MI = Mutual_Information(GrayScale_Array, Y)
+OTSU_MI = Mutual_Information(GrayScale_Array, Segmented_Array)
+
+print('Obtained segmented image MI / Otsu segmentation MI: %.3f'%(PCNN_MI / OTSU_MI))
+

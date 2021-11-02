@@ -19,6 +19,8 @@
 *.png
 *.svg
 *.jpg
+*.BMP
+*.gif
 
 # Ignore auxiliary tex files
 *.aux
