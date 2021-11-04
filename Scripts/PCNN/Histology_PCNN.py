@@ -217,10 +217,11 @@ plt.title('Input')
 plt.show()
 plt.close(Figure)
 
-# Save grayscale image
-# I = GrayScale_Array * 255
+# # Save grayscale image
+# GrayScale_Array = RGB2Gray(Image_Array)
+I = GrayScale_Array * 255
 # from skimage import io
-# io.imsave('output.tiff', I.astype(np.uint8))
+io.imsave('TrainingImage.png', I.astype(np.uint8))
 
 
 # Compute best threshold

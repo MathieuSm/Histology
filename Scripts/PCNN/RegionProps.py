@@ -3,13 +3,15 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from skimage import measure
+from skimage import measure, feature, exposure
 import pandas as pd
+import matplotlib as mpl
 
 
-def PlotROI(RegionsProperties, ROINumber):
-    M = 0
-    RegionProperties = RegionsProperties[M]
+def PlotROI(RegionsProperties, ROINumber, X, Y):
+    # M = 0
+    M = ROINumber
+    RegionProperties = RegionsProperties[M-1]
 
     Y0, X0 = RegionProperties.centroid
     R1 = RegionProperties.major_axis_length * 0.5
@@ -24,11 +26,11 @@ def PlotROI(RegionsProperties, ROINumber):
 
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
     Axes.imshow(ImageArray, cmap='gray')
-    Axes.plot(X, Y, color=(0, 1, 0), label='Contour')
+    Axes.plot(X, Y, color=(1, 0, 0, 0.2), label='Region')
     Axes.plot(X0, Y0, marker='x', color=(0, 0, 1), linestyle='none', markersize=10, mew=2, label='centroid')
-    Axes.plot(X0 + Ellipse_R[0, :], Y0 + Ellipse_R[1, :], color=(1, 0, 0), label='Fitted ellipse')
-    Axes.set_xlim([0, Image_ROI.shape[1]])
-    Axes.set_ylim([0, Image_ROI.shape[0]])
+    Axes.plot(X0 + Ellipse_R[0, :], Y0 + Ellipse_R[1, :], color=(0, 1, 0), label='Fitted ellipse')
+    Axes.set_xlim([int((X0 + Ellipse_R[0, :].min())*0.9), int((X0 + Ellipse_R[0, :].max())*1.1)])
+    Axes.set_ylim([int((Y0 + Ellipse_R[1, :].min())*0.9), int((Y0 + Ellipse_R[1, :].max())*1.1)])
     plt.title('ROI ' + str(ROINumber))
     plt.axis('off')
     plt.legend(loc='upper center', bbox_to_anchor=(0.5, 0), ncol=3, frameon=False)
@@ -36,6 +38,7 @@ def PlotROI(RegionsProperties, ROINumber):
     plt.close(Figure)
 
     return
+
 
 desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
@@ -46,16 +49,99 @@ ImageDirectory = CurrentDirectory + '/Scripts/PCNN/Training/'
 Files = os.listdir(ImageDirectory)
 Files.sort()
 
-Image = sitk.ReadImage(ImageDirectory + Files[-1])
+Image = sitk.ReadImage(ImageDirectory + Files[0])
 ImageArray = sitk.GetArrayFromImage(Image)
 
+OtsuFilter = sitk.OtsuThresholdImageFilter()
+OtsuFilter.SetInsideValue(1)
+OtsuFilter.SetOutsideValue(0)
+OtsuFilter.Execute(Image)
+Best_Threshold = OtsuFilter.GetThreshold()
+
+SegmentedImage = sitk.ReadImage(ImageDirectory + Files[-2])
+SegmentedImageArray = sitk.GetArrayFromImage(SegmentedImage)
+
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(ImageArray,cmap='gray')
+Axes.imshow(SegmentedImageArray,cmap='gray')
 plt.axis('off')
 plt.title('Image')
-Axes.set_ylim([0,ImageArray.shape[0]])
+Axes.set_ylim([0,SegmentedImageArray.shape[0]])
 plt.show()
 plt.close(Figure)
+
+CementLines = SegmentedImageArray[:,:,0].copy()
+Canaliculi = SegmentedImageArray[:,:,1].copy()
+Threshold = 200
+CementLines[CementLines < Threshold] = 0
+CementLines[CementLines >= Threshold] = 1
+Canaliculi[Canaliculi < Threshold] = 0
+Canaliculi[Canaliculi >= Threshold] = 1
+
+F0 = SegmentedImageArray[:,:,0] > 180
+F1 = SegmentedImageArray[:,:,1] > 180
+F2 = SegmentedImageArray[:,:,2] > 180
+CementLines[F1] = 0
+CementLines[F2] = 0
+Canaliculi[F0] = 0
+Canaliculi[F2] = 0
+
+# Create custom color map
+C = np.array([[0, 0, 0, 0], [1, 0, 0, 1], [0, 1, 0, 1]])
+ColorMap = mpl.colors.ListedColormap(C)
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(SegmentedImageArray,cmap='gray')
+Axes.imshow(Canaliculi*2 + CementLines, cmap=ColorMap, vmin=0.5, vmax=1.5)
+Axes.axis('off')
+Axes.set_xlim([3000,4000])
+Axes.set_ylim([3000,4000])
+# Axes.set_ylim([0,Segments.shape[0]])
+plt.legend()
+plt.show()
+plt.close(Figure)
+
+Labels = measure.label(CementLines,connectivity=2)
+RegionsProperties = measure.regionprops(Labels, ImageArray)
+
+
+R = 0
+Region = RegionsProperties[R]
+Y_s, X_s = Region.slice
+ImageRegion = ImageArray[Y_s.start:Y_s.stop,X_s.start:X_s.stop] * Region.filled_image
+CanaliculiRegion = Canaliculi[Y_s.start:Y_s.stop,X_s.start:X_s.stop]
+
+CanaliculiProperties = measure.regionprops(CanaliculiRegion, ImageRegion)
+Properties[0].filled_image*1
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(ImageRegion,cmap='gray')
+Axes.imshow(CanaliculiRegion, cmap=ColorMap, vmin=0.25,vmax=0.75)
+plt.axis('off')
+plt.title('Region')
+Axes.set_ylim([0,ImageRegion.shape[0]])
+plt.show()
+plt.close(Figure)
+
+RegionContrast = exposure.adjust_log(ImageRegion,gain=0)
+RegionEdges = feature.canny(ImageRegion,sigma=2)
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(RegionEdges,cmap='gray')
+plt.axis('off')
+plt.title('Region')
+Axes.set_ylim([0,RegionEdges.shape[0]])
+plt.show()
+plt.close(Figure)
+
+
+RegionLabels = measure.label(SegmentedRegion,connectivity=2)
+ObjectsProperties = measure.regionprops(RegionLabels,)
+
+
+M = 3
+Y, X = np.where(Labels == M)
+PlotROI(RegionsProperties, M, X, Y)
+
 
 ROIs = ImageArray.copy()
 ROI_Files = [File for File in Files if File.endswith('csv')]
