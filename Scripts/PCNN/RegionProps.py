@@ -38,6 +38,18 @@ def PlotROI(RegionsProperties, ROINumber, X, Y):
     plt.close(Figure)
 
     return
+def RGB2Gray(RGBImage):
+    """
+    This function convert color image to gray scale image
+    based on matplotlib linear approximation
+    """
+
+    R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
+    Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
+    Normalized_Gray = Gray / Gray.max()
+
+    return Normalized_Gray
+
 
 
 desired_width = 500
@@ -46,7 +58,7 @@ plt.rc('font', size=12)
 
 CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Scripts/PCNN/Training/'
-Files = os.listdir(ImageDirectory)
+Files = [File for File in os.listdir(ImageDirectory) if not os.path.isdir(ImageDirectory+File)]
 Files.sort()
 
 Image = sitk.ReadImage(ImageDirectory + Files[0])
@@ -58,16 +70,19 @@ OtsuFilter.SetOutsideValue(0)
 OtsuFilter.Execute(Image)
 Best_Threshold = OtsuFilter.GetThreshold()
 
-SegmentedImage = sitk.ReadImage(ImageDirectory + Files[-2])
+SegmentedImage = sitk.ReadImage(ImageDirectory + 'Fiji/ClassifiedImage.png')
 SegmentedImageArray = sitk.GetArrayFromImage(SegmentedImage)
+GrayScaleSegments = RGB2Gray(SegmentedImageArray)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(SegmentedImageArray,cmap='gray')
+Axes.imshow(GrayScaleSegments,cmap='gray')
 plt.axis('off')
 plt.title('Image')
-Axes.set_ylim([0,SegmentedImageArray.shape[0]])
+Axes.set_ylim([0,GrayScaleSegments.shape[0]])
 plt.show()
 plt.close(Figure)
+
+
 
 CementLines = SegmentedImageArray[:,:,0].copy()
 Canaliculi = SegmentedImageArray[:,:,1].copy()
@@ -93,10 +108,9 @@ Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(SegmentedImageArray,cmap='gray')
 Axes.imshow(Canaliculi*2 + CementLines, cmap=ColorMap, vmin=0.5, vmax=1.5)
 Axes.axis('off')
-Axes.set_xlim([3000,4000])
-Axes.set_ylim([3000,4000])
+Axes.set_xlim([4724,4724+1181])
+Axes.set_ylim([3839,3839+1181])
 # Axes.set_ylim([0,Segments.shape[0]])
-plt.legend()
 plt.show()
 plt.close(Figure)
 
