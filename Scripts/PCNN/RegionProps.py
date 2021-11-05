@@ -122,8 +122,9 @@ Axes.set_ylim([0,ImageRegion.shape[0]])
 plt.show()
 plt.close(Figure)
 
-RegionContrast = exposure.adjust_log(ImageRegion,gain=0)
-RegionEdges = feature.canny(ImageRegion,sigma=2)
+RegionContrast = exposure.equalize_hist(ImageRegion)
+
+RegionEdges = feature.canny(RegionContrast,sigma=2)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(RegionEdges,cmap='gray')
