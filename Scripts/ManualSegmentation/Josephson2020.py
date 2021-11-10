@@ -11,7 +11,7 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from skimage import exposure, morphology, measure, segmentation
+from skimage import exposure, morphology, measure, segmentation, filters, feature
 from scipy.ndimage import correlate
 import matplotlib as mpl
 
@@ -51,6 +51,75 @@ def DistinguishableColors(N, shuffle=True):
 
     return ColorMap
 
+
+def Watershed(GrayImage, Labels, Hmax):
+    """
+    Insipired from master thesis of Josephson
+    Does not work, for the moment
+    """
+
+    N = len(np.unique(Labels))
+
+    Keys = np.arange(256).astype('int')
+    Q = {Key: None for Key in Keys}
+
+    for i in range(N):
+        Y, X = np.where(Labels == i)
+
+        for j in range(len(X)):
+            Key = int(round(GrayImage[Y[j], X[j]]))
+            Values = [Y[j], X[j]]
+
+            if Q[Key]:
+                Q[Key] = [Q[Key][0], Values]
+            else:
+                Q[Key] = [Values]
+
+    EmptyQ = False
+
+    while not EmptyQ:
+
+        for i in range(256):
+
+            if not Q[i]:
+                EmptyQ = True
+                continue
+
+            EmptyQ = False
+
+            for j in range(len(Q[i])):
+                X = Q[i][j][1]
+                Y = Q[i][j][0]
+                cX = [X - 1, X, X + 1]
+                cY = [Y - 1, Y, Y + 1]
+                Marker = Labels[Y, X]
+                Q[i].pop(j)
+
+                for x in cX:
+                    for y in cY:
+
+                        C1 = x == X
+                        C2 = y == Y
+                        C3 = Labels[y, x] > 0
+                        C4 = GrayImage[y, x] > Hmax
+
+                        if C1 and C2:
+                            continue
+                        if C3:
+                            continue
+                        if C4:
+                            continue
+
+                        Labels[y, x] = Marker
+                        Key = int(round(GrayImage[y, x]))
+                        Q[Key] = [Q[Key][0], [y, x]]
+
+                break
+
+            break
+
+    return Labels
+
 desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
 plt.rc('font', size=12)
@@ -89,7 +158,7 @@ plt.show()
 plt.close(Figure)
 
 
-EqualizedHistogram = exposure.match_histograms(R, B)
+EqualizedHistogram = np.round(exposure.match_histograms(R, B)).astype('uint8')
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(EqualizedHistogram, cmap='gray')
@@ -132,7 +201,7 @@ plt.show()
 plt.close(Figure)
 
 ## Label
-Disk = morphology.disk(5)
+Disk = morphology.disk(40)
 BW_Dilate = morphology.binary_dilation(BW_Smooth,Disk)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
@@ -147,85 +216,80 @@ CMap = DistinguishableColors(len(np.unique(Labels))-1)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(EqualizedHistogram, cmap='gray')
-ColorsBar = Axes.imshow(Labels, cmap=CMap)
+Axes.imshow(Labels, cmap=CMap)
 plt.axis('off')
 plt.title('Labeled image')
-plt.colorbar(ColorsBar)
 plt.show()
 plt.close(Figure)
 
-WS = segmentation.watershed(EqualizedHistogram,Labels,connectivity=1)
+DistanceLabels = Labels.copy()
+DistanceLabels[DistanceLabels > 0] = 1
+MedialAxis, Distances = morphology.medial_axis(1-DistanceLabels, return_distance=True)
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-ColorBar = Axes.imshow(WS, cmap=CMap)
-plt.colorbar(ColorBar)
+Axes.imshow(Distances, cmap='gray')
+plt.axis('off')
+plt.title('Image gradient')
+plt.show()
+plt.close(Figure)
+
+SegmentImage = (256 - EqualizedHistogram) * (Distances / Distances.max())
+WS = segmentation.watershed(SegmentImage,Labels,connectivity=1)
+WS_Edges = segmentation.find_boundaries(WS) * 255
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(WS, cmap=CMap)
 plt.axis('off')
 plt.title('Watershed labelling')
 plt.show()
 plt.close(Figure)
 
-def Watershed(GrayImage, Labels, Hmax):
+Gradient = filters.rank.gradient(EqualizedHistogram, morphology.disk(5))
+NormGradient = np.round((Gradient - Gradient.min()) / (Gradient.max() - Gradient.min()) * 255).astype('uint8')
 
-    N = len(np.unique(Labels))
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(NormGradient, cmap='gray')
+plt.axis('off')
+plt.title('Image gradient')
+plt.show()
+plt.close(Figure)
 
-    Q = dict()
+Gradient_Edges = feature.canny(NormGradient, sigma=1) * 255
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(Gradient_Edges, cmap='binary_r')
+plt.axis('off')
+plt.title('Gradient edges')
+plt.show()
+plt.close(Figure)
+
+Disk = morphology.disk(2)
+Edges_Dilate = morphology.binary_dilation(Gradient_Edges,Disk) * 255
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(Edges_Dilate, cmap='binary_r')
+plt.axis('off')
+plt.title('Gradient edges')
+plt.show()
+plt.close(Figure)
 
 
-    for i in range(N):
-        Y, X = np.where(Labels == i)
+Overlay = WS_Edges + Edges_Dilate + NormGradient
+Overlay[Overlay > 255] = 255
 
-        for j in range(len(X)):
-            Key = int(round(GrayImage[Y[j], X[j]]))
-            Values = [Y[j], X[j]]
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(Overlay, cmap='gray')
+plt.axis('off')
+plt.title('Gradient edges')
+plt.show()
+plt.close(Figure)
 
-            if Key in Q.keys():
-                Q[Key] = [Q[Key][0],Values]
-            else:
-                Q[Key] = [Values]
+WS2 = segmentation.watershed(Overlay,Labels,connectivity=1)
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(WS2, cmap=CMap)
+plt.axis('off')
+plt.title('Watershed labelling')
+plt.show()
+plt.close(Figure)
 
-    EmptyQ = False
 
-    while not EmptyQ:
-
-        for i in range(256):
-
-            if i not in Q.keys():
-                EmptyQ = True
-                continue
-
-            EmptyQ = False
-
-            for j in range(len(Q[i])):
-                X = Q[i][j][1]
-                Y = Q[i][j][0]
-                cX = [X - 1, X, X + 1]
-                cY = [Y - 1, Y, Y + 1]
-                Marker = Labels[Y,X]
-                Q[i][j] = []
-
-                for x in cX:
-                    for y in cY:
-
-                        C1 = x == X
-                        C2 = y == Y
-                        C3 = Labels[y,x] > 0
-                        C4 = GrayImage[y,x] > Hmax
-
-                        if C1 and C2:
-                            continue
-                        if C3:
-                            continue
-                        if C4:
-                            continue
-
-                        Labels[y,x] = Marker
-                        Key = int(round(GrayImage[y,x]))
-                        Q[Key] = [Q[Key][0], [y,x]]
-
-                break
-
-            break
-
-    return Labels
-
-WS2 = Watershed(EqualizedHistogram, Labels, 210)

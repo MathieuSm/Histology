@@ -24,7 +24,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
-from skimage import measure
+from skimage import measure, exposure
 import pandas as pd
 
 desired_width = 500
@@ -198,8 +198,10 @@ Crop_X = round(X_Crop_Size / Image.GetSpacing()[1] + 0.5)
 Crop_Y = round(Y_Crop_Size / Image.GetSpacing()[0] + 0.5)
 Random_X = round(np.random.uniform(0,Image.GetSize()[1]-Crop_X-1))
 Random_Y = round(np.random.uniform(0,Image.GetSize()[0]-Crop_Y-1))
-Random_X = round(325 / Image.GetSpacing()[1])
-Random_Y = round(400 / Image.GetSpacing()[0])
+# Random_X = round(325 / Image.GetSpacing()[1])
+# Random_Y = round(400 / Image.GetSpacing()[0])
+Random_X = 779
+Random_Y = 6396
 Cropping = (Image.GetSize()[0]-Random_Y-Crop_Y,Image.GetSize()[1]-Random_X-Crop_X)
 SubImage = sitk.Crop(Image,(Random_Y,Random_X),Cropping)
 SubImage_Array = PlotImage(SubImage)
@@ -207,6 +209,10 @@ SubImage_Array = PlotImage(SubImage)
 # Read input
 RGB_Array = sitk.GetArrayFromImage(SubImage)
 GrayScale_Array = RGB2Gray(RGB_Array)
+
+R, G, B = RGB_Array[:,:,0], RGB_Array[:,:,1], RGB_Array[:,:,2]
+GrayScale_Array = np.round(exposure.match_histograms(R, B)).astype('uint8')
+GrayScale_Array = (GrayScale_Array - GrayScale_Array.min()) / (GrayScale_Array.max()-GrayScale_Array.min())
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
 Axes.imshow(GrayScale_Array,cmap='gray',vmin=0,vmax=1)
@@ -252,8 +258,11 @@ Ps = 20         # Population size
 t = 0           # Iteration number
 Max_times = 10  # Max iteration number
 Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
-Average_FV = 0.99   # Second PSO termination condition
+Average_FV = 1E-3   # Second PSO termination condition
 
+Targets = pd.DataFrame({'Perimeter':3000,
+                        'Euler Number': 1,
+                        'Orientation': 1}, index=[0])
 
 
 # PSO step 1 - Initialization
@@ -282,7 +291,10 @@ V = C1 * np.random.uniform(-1,1,(Ps,Dimensions)) * RangeAmplitudes \
 
 # PSO step 2 - Initial evaluation
 ParameterList = ['AlphaF','AlphaL','AlphaT','VF','VL','VT','Beta']
-InitialEntropies = np.zeros((Ps,1))
+Properties = ('label', 'centroid', 'major_axis_length', 'minor_axis_length', 'orientation', 'euler_number')
+InitialPerimeters = np.zeros((Ps,1))
+InitialEuler = np.zeros((Ps,1))
+InitialOrientations = np.zeros((Ps,1))
 for ParticleNumber in range(Ps):
     ParametersDictionary = {}
     for ParameterNumber in range(Dimensions):
@@ -292,34 +304,46 @@ for ParticleNumber in range(Ps):
 
     Y = PCNN_Segmentation(GrayScale_Array,ParametersDictionary)
 
-    # Compute entropy and store it
-    N0 = np.count_nonzero(Y == 0)
-    N1 = np.count_nonzero(Y == 1)
-    P1 = N0 / Y.size
-    P2 = N1 / Y.size
-    if P1 == 0:
-        H = - P2 * np.log2(P2)
-    elif P2 == 0:
-        H = -P1 * np.log2(P1)
+    # Label different regions and compute properties
+    Labels = measure.label(Y, connectivity=2)
+    RegionsProperties = measure.regionprops(Labels, GrayScale_Array)
+    PropertiesTable = pd.DataFrame(measure.regionprops_table(Labels, properties=Properties))
+    Columns = ['Region', 'X', 'Y', 'R1', 'R2', 'Alpha', 'Euler']
+    PropertiesTable.columns = Columns
+    a = PropertiesTable['R1']
+    b = PropertiesTable['R2']
+    PropertiesTable['Perimeter'] = np.pi * np.sqrt(2 * (a ** 2 + b ** 2))
+    PropertiesTable['Alpha'] = PropertiesTable['Alpha'] / np.pi * 180
+
+    # Store Ratio of obtained properties over target
+    if len(PropertiesTable) == 0:
+        Perimeter = 0
+        Euler = 0
+        Orientation = 0
     else:
-        H = -P1 * np.log2(P1) - P2 * np.log2(P2)
+        Perimeter = PropertiesTable['Perimeter'].mean()
+        Euler = PropertiesTable['Euler'].mean()
+        AlphaCounts = PropertiesTable['Alpha'].round(-1).value_counts()
+        Orientation = len(AlphaCounts[AlphaCounts > 1]) / len(AlphaCounts)
 
-    InitialEntropies[ParticleNumber,0] = H
-
+    InitialPerimeters[ParticleNumber, 0] = Perimeter / Targets['Perimeter']
+    InitialEuler[ParticleNumber, 0] = abs(Euler / Targets['Euler Number'])
+    InitialOrientations[ParticleNumber, 0] = Orientation / Targets['Orientation']
 
 # Set initial best values
-G_Best_Value = InitialEntropies.max()
-G_Best_Index = np.where(InitialEntropies == G_Best_Value)[0][0]
+Initial_Targets = (abs(1-InitialPerimeters) + abs(1-InitialEuler) + abs(1-InitialOrientations)) / 3
+G_Best_Value = Initial_Targets.min()
+G_Best_Index = np.argmin(Initial_Targets)
 G_Best = X[G_Best_Index]
 
-P_Best_Values = InitialEntropies.copy()
+P_Best_Values = Initial_Targets.copy()
 P_Best = X.copy()
 
 
 ## Start loop
-Average_FVs = np.zeros(3)
+Average_FVs = np.ones(3)
 NIteration = 0
-while NIteration < 100 and Average_FVs.mean() <= Average_FV:
+while NIteration < 10 and Average_FVs.mean() > Average_FV:
 
     ## PSO step 3 - Update positions and velocities
     R1, R2 = np.random.uniform(0, 1, 2)
@@ -332,7 +356,9 @@ while NIteration < 100 and Average_FVs.mean() <= Average_FV:
 
 
     ## PSO step 4 - Evaluation of the updated population
-    NewEntropies = np.zeros((Ps,1))
+    NewPerimeters = np.zeros((Ps, 1))
+    NewEuler = np.zeros((Ps, 1))
+    NewOrientations = np.zeros((Ps, 1))
     for ParticleNumber in range(Ps):
         ParametersDictionary = {}
         for ParameterNumber in range(Dimensions):
@@ -342,28 +368,41 @@ while NIteration < 100 and Average_FVs.mean() <= Average_FV:
 
         Y = PCNN_Segmentation(GrayScale_Array,ParametersDictionary)
 
-        # Compute entropy and store it
-        N0 = np.count_nonzero(Y == 0)
-        N1 = np.count_nonzero(Y == 1)
-        P0 = N0 / Y.size
-        P1 = N1 / Y.size
-        if P0 == 0:
-            H = - P1 * np.log2(P1)
-        elif P1 == 0:
-            H = -P0 * np.log2(P0)
-        else:
-            H = -P1 * np.log2(P1) - P0 * np.log2(P0)
+        # Label different regions and compute properties
+        Labels = measure.label(Y, connectivity=2)
+        RegionsProperties = measure.regionprops(Labels, GrayScale_Array)
+        PropertiesTable = pd.DataFrame(measure.regionprops_table(Labels, properties=Properties))
+        Columns = ['Region', 'X', 'Y', 'R1', 'R2', 'Alpha', 'Euler']
+        PropertiesTable.columns = Columns
+        a = PropertiesTable['R1']
+        b = PropertiesTable['R2']
+        PropertiesTable['Perimeter'] = np.pi * np.sqrt(2 * (a ** 2 + b ** 2))
+        PropertiesTable['Alpha'] = PropertiesTable['Alpha'] / np.pi * 180
 
-        NewEntropies[ParticleNumber,0] = H
+        # Store Ratio of obtained properties over target
+        if len(PropertiesTable) == 0:
+            Perimeter = 0
+            Euler = 0
+            Orientation = 0
+        else:
+            Perimeter = PropertiesTable['Perimeter'].mean()
+            Euler = PropertiesTable['Euler'].mean()
+            AlphaCounts = PropertiesTable['Alpha'].round(-1).value_counts()
+            Orientation = len(AlphaCounts[AlphaCounts > 1]) / len(AlphaCounts)
+
+        NewPerimeters[ParticleNumber, 0] = Perimeter / Targets['Perimeter']
+        NewEuler[ParticleNumber, 0] = abs(Euler / Targets['Euler Number'])
+        NewOrientations[ParticleNumber, 0] = Orientation / Targets['Orientation']
 
     # Update best values if better than previous
-    if NewEntropies.max() > G_Best_Value:
-        G_Best_Value = NewEntropies.max()
-        G_Best_Index = np.where(NewEntropies == G_Best_Value)[0][0]
+    New_Targets = (abs(1-NewPerimeters) + abs(1-NewEuler) + abs(1-NewOrientations)) / 3
+    if New_Targets.min() < G_Best_Value:
+        G_Best_Value = New_Targets.min()
+        G_Best_Index = np.argmin(New_Targets)
         G_Best = X[G_Best_Index]
 
-    ImprovedValues = NewEntropies > P_Best_Values
-    P_Best_Values[ImprovedValues] = NewEntropies[ImprovedValues]
+    ImprovedValues = New_Targets > P_Best_Values
+    P_Best_Values[ImprovedValues] = New_Targets[ImprovedValues]
     Reshaped_IP = np.tile(ImprovedValues,Dimensions).reshape((Ps,Dimensions))
     P_Best[Reshaped_IP] = X[Reshaped_IP]
 
