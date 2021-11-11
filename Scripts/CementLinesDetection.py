@@ -14,9 +14,10 @@ Master thesis, Drexel university
 
 import os
 import numpy as np
+import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from skimage import exposure, filters, morphology
+from skimage import exposure, filters, morphology, measure
 
 
 def PlotImage(Image):
@@ -99,6 +100,48 @@ Axes[2].axis('off')
 plt.show()
 plt.close(Figure)
 
+## Find edges using Frangi filter
+R_Edges = filters.frangi(R, sigmas=range(1,5,1), mode='reflect')
+Threshold = filters.threshold_otsu(R_Edges)
+R_Edges = (R_Edges >= Threshold) * 1
+
+G_Edges = filters.frangi(G, sigmas=range(1,5,1), mode='reflect')
+Threshold = filters.threshold_otsu(G_Edges)
+G_Edges = (G_Edges >= Threshold) * 1
+
+B_Edges = filters.frangi(B, sigmas=range(1,5,1), mode='reflect')
+Threshold = filters.threshold_otsu(B_Edges)
+B_Edges = (B_Edges >= Threshold) * 1
+
+
+Disk = morphology.disk(2)
+R_Dilate = morphology.binary_erosion(R_Edges,Disk)
+G_Dilate = morphology.binary_erosion(G_Edges,Disk)
+B_Dilate = morphology.binary_erosion(B_Edges,Disk)
+
+Disk = morphology.disk(5)
+Edges = R_Dilate * G_Dilate * B_Dilate
+Edges = morphology.binary_dilation(Edges,Disk)
+PlotArray(Edges,Spacing=Image.GetSpacing())
+
+Labels = measure.label(Edges,connectivity=1)
+Properties = ('label','area')
+PropertiesTable = pd.DataFrame(measure.regionprops_table(Labels,properties=Properties))
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.plot(PropertiesTable['area'], marker='o',linestyle='none',color=(1,0,0),fillstyle='none')
+plt.show()
+plt.close(Figure)
+
+Filter = PropertiesTable['area'] > 250
+RegionLabels = PropertiesTable[Filter]['label']
+FilteredRegions = np.zeros(Labels.shape)
+for Label in RegionLabels.values:
+    Y, X = np.where(Labels == Label)
+    FilteredRegions[Y, X] = 1
+PlotArray(FilteredRegions,Spacing=Image.GetSpacing())
+
+
 GrayScale_Array = np.round(exposure.match_histograms(R, B)).astype('uint8')
 GrayScale_Array = (GrayScale_Array - GrayScale_Array.min()) / (GrayScale_Array.max()-GrayScale_Array.min()) * 255
 PlotArray(GrayScale_Array,Spacing=Image.GetSpacing())
@@ -117,3 +160,9 @@ PlotArray(BW,Spacing=Image.GetSpacing())
 Disk = morphology.disk(2)
 BW_Dilate = morphology.binary_dilation(BW,Disk)
 PlotArray(BW_Dilate,Spacing=Image.GetSpacing())
+
+
+
+
+## Try PCNN single neuron firing segmentation
+
