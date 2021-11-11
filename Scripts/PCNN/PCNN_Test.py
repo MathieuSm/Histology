@@ -4,10 +4,11 @@ Code for testing PCNN-PSO-AT with different inputs or fitness function
 
 import os
 import numpy as np
+import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
-from skimage import exposure, morphology, filters, feature, segmentation
+from skimage import exposure, morphology, filters, feature, segmentation, measure
 import matplotlib as mpl
 
 desired_width = 500
@@ -139,6 +140,37 @@ def DiceCoefficient(Image1,Image2):
     Dice = 2 * np.sum(Image1 * Image2) / np.sum(Image1 + Image2)
 
     return Dice
+def PlotROI(ImageArray, RegionLabel, Labels):
+
+    C = np.array([[0, 0, 0, 0], [1, 0, 0, 0.5]])
+    ColorMap = mpl.colors.ListedColormap(C)
+    Region = (Labels == RegionLabel)
+
+    E = measure.EllipseModel()
+    X, Y = np.where(Labels == RegionLabel)
+    XY = np.concatenate(np.array([X, Y]).T, axis=0).reshape((len(X), 2))
+    E.estimate(XY)
+    Y0, X0, R1, R2, OrientationAngle = E.params
+
+    Radians = np.linspace(0, 2 * np.pi, 100)
+    Ellipse = np.array([R2 * np.cos(Radians), R1 * np.sin(Radians)])
+    R = np.array([[np.cos(OrientationAngle), -np.sin(OrientationAngle)],
+                  [np.sin(OrientationAngle), np.cos(OrientationAngle)]])
+    Ellipse_R = np.dot(R, Ellipse)
+
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+    Axes.imshow(ImageArray, cmap='gray')
+    Axes.imshow(Region, cmap=ColorMap, vmin=0.25, vmax=0.75)
+    Axes.plot([], color=(1,0,0,0.5), linestyle='none', marker='s', label='Region')
+    Axes.plot(X0, Y0, marker='x', color=(0, 0, 1), linestyle='none', markersize=10, mew=2, label='centroid')
+    Axes.plot(X0 + Ellipse_R[0, :], Y0 - Ellipse_R[1, :], color=(0, 1, 0), label='Fitted ellipse')
+    plt.title('Region ' + str(RegionLabel))
+    plt.axis('off')
+    plt.legend(loc='upper center', bbox_to_anchor=(0.5, 0), ncol=3, frameon=False)
+    plt.show()
+    plt.close(Figure)
+
+    return
 
 
 
@@ -200,13 +232,16 @@ plt.close(Figure)
 GS = exposure.match_histograms(R, B)
 GS_Rescaled = NormalizeArray(GS)
 PlotArray(GS_Rescaled, 'Grayscale Image')
+GS_Rescaled = sitk.ReadImage(ImageDirectory + 'PCNN_Test.png')
+GS_Rescaled = sitk.GetArrayFromImage(GS_Rescaled)
+
 
 Gamma, Gain = 2, 1
 GS_Contrast = exposure.adjust_gamma(GS_Rescaled,Gamma,Gain)
 PlotArray(GS_Contrast, 'Gamma:' + str(Gamma) + ' Gain:' + str(Gain))
 
 Sigma = 5
-GS_Gauss = filters.gaussian(GS_Contrast,sigma=Sigma)
+GS_Gauss = filters.gaussian(GS_Rescaled,sigma=Sigma)
 GS_Gauss = NormalizeArray(GS_Gauss)
 PlotArray(GS_Gauss, 'Gauss sigma:' + str(Sigma))
 
@@ -217,7 +252,7 @@ t = 0           # Iteration number
 Max_times = 10  # Max iteration number
 Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
 Average_FV = 0.99   # Second PSO termination condition
-Image = GS_Rescaled
+Image = R[4:,3:] / R[4:,3:].max()
 
 # PSO step 1 - Initialization
 AlphaF_Range = [-1,1]
@@ -315,7 +350,6 @@ while NIteration < 100 and Average_FVs.mean() <= Average_FV:
     Average_FVs = np.concatenate([Average_FVs[1:],np.array(G_Best_Value).reshape(1)])
 
 
-
 ## PSO step 6 - Output results
 ParametersDictionary = {}
 for ParameterNumber in range(Dimensions):
@@ -325,14 +359,32 @@ for ParameterNumber in range(Dimensions):
 Y = PCNN_Segmentation(Image,ParametersDictionary)
 PlotArray(Y, 'PCNN Segmentation')
 
+ParametersDictionary = {'AlphaF': -0.2381907530225938,
+                        'AlphaL': -0.2398532814016563,
+                        'AlphaT': 0.7220370952618878,
+                        'VF': -0.30581795422704827,
+                        'VL': 1.0,
+                        'VT': 0.5418764530883855,
+                        'Beta': -1.0}
 
-Vb = BetweenClassVariance(Image,Y)
+Disk = morphology.disk(2)
+BW_Dilate = morphology.binary_dilation(Y,Disk)
+PlotArray(BW_Dilate, 'Dilated segmentation')
 
+Labels = measure.label(BW_Dilate,connectivity=2)
+Properties = ('label', 'area', 'orientation', 'euler_number')
+PropertiesTable = pd.DataFrame(measure.regionprops_table(Labels,properties=Properties))
 
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.plot(PropertiesTable['area'], marker='o',linestyle='none',color=(1,0,0),fillstyle='none')
+plt.show()
+plt.close(Figure)
 
+PropertiesTable.sort_values('area')
+RegionsLabels = [3, 20, 31]
 
-
-
+for Region in Regions:
+    PlotROI(Y, Region, Labels)
 
 
 
@@ -373,8 +425,21 @@ plt.close(Figure)
 
 
 
+GS_Gradient = filters.rank.gradient(GS_Rescaled, morphology.disk(2))
+PlotArray(GS_Gradient, 'Grayscale Gradient')
 
-GS_Enhanced = exposure.match_histograms(GS, T)
+Threshold = filters.threshold_otsu(GS_Gradient)
+GS_Gradient_Seg = (GS_Gradient > Threshold) * 1
+PlotArray(GS_Gradient_Seg, 'Otsu segmentation')
+
+Combine = (Y + GS_Gradient_Seg) / 2
+Combine[Combine < 1] = 0
+PlotArray(Combine, 'Combine segmentation')
+
+
+
+
+GS_Enhanced = exposure.match_histograms(GS, Y)
 GS_Enhanced = NormalizeArray(GS_Enhanced)
 PlotArray(GS_Enhanced, 'Grayscale Image')
 
@@ -437,7 +502,7 @@ PlotArray(GS_Edges_F, 'Grayscale Edges (Frangi)')
 GS_Edges_S = filters.sobel(GS_Rescaled, mode='reflect')
 PlotArray(GS_Edges_S, 'Grayscale Edges (Sobel)')
 
-GS_Edges_C = feature.canny(GS_Rescaled,sigma=2,use_quantiles=True,high_threshold=1)
+GS_Edges_C = feature.canny(GS_Rescaled,sigma=2)
 PlotArray(GS_Edges_C, 'Grayscale Edges (Canny)')
 
 GS_Edges_R = filters.roberts(GS_Rescaled)
