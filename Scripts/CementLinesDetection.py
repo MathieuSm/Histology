@@ -18,6 +18,7 @@ import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from skimage import exposure, filters, morphology, measure
+from scipy.ndimage import correlate
 
 
 def PlotImage(Image):
@@ -43,7 +44,7 @@ def PlotImage(Image):
     plt.show()
 
     return Image_Array
-def PlotArray(Array,Spacing):
+def PlotArray(Array,Spacing=(0.08466666666666667, 0.08466666666666667),Title=None):
 
     X_Positions = np.arange(Array.shape[1]) * Spacing[1]
     Y_Positions = np.arange(Array.shape[0]) * Spacing[0]
@@ -58,6 +59,7 @@ def PlotArray(Array,Spacing):
     Axes.set_ylim([0, Array.shape[0]])
     Axes.set_xlabel('X ($\mu$m)')
     Axes.set_ylabel('Y ($\mu$m)')
+    plt.title(Title)
     plt.xticks(np.arange(0, Array.shape[1])[::TicksSize], np.round(X_Positions[::TicksSize]).astype('int'))
     plt.yticks(np.arange(0, Array.shape[0])[::TicksSize], np.round(Y_Positions[::TicksSize]).astype('int'))
     plt.show()
