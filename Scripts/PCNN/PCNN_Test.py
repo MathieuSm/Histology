@@ -179,8 +179,9 @@ CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
 
 # Open manually segmented image
-SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test_Seg.png')
+SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test2_Seg.png')
 SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
+# SegmentedArray = SegmentedArray[3839:3839+1182,4724:4724+1182]
 
 CementLines = SegmentedArray[:,:,0].copy()
 Harvesian = SegmentedArray[:, :, 1].copy()
@@ -204,11 +205,15 @@ Osteocytes[F0] = 0
 Osteocytes[F1] = 0
 
 Segments = CementLines + Harvesian + Osteocytes
+Disk = morphology.disk(10)
+Segments = morphology.binary_erosion(Harvesian,Disk)
 PlotArray(Segments, 'Manual Segmentation')
 
 # Open image to segment
-Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test.jpg')
+Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
 Array = sitk.GetArrayFromImage(Image)
+Random_X = round(325 / Image.GetSpacing()[1])
+Random_Y = round(400 / Image.GetSpacing()[0])
 PlotArray(Array, 'RGB Image')
 
 # Decompose RGB image and equalize histogram
@@ -232,8 +237,6 @@ plt.close(Figure)
 GS = exposure.match_histograms(R, B)
 GS_Rescaled = NormalizeArray(GS)
 PlotArray(GS_Rescaled, 'Grayscale Image')
-GS_Rescaled = sitk.ReadImage(ImageDirectory + 'PCNN_Test.png')
-GS_Rescaled = sitk.GetArrayFromImage(GS_Rescaled)
 
 
 Gamma, Gain = 2, 1
@@ -251,19 +254,19 @@ Ps = 20         # Population size
 t = 0           # Iteration number
 Max_times = 10  # Max iteration number
 Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
-Average_FV = 0.99   # Second PSO termination condition
-Image = R[4:,3:] / R[4:,3:].max()
+Average_FV_std = 1E-3   # Second PSO termination condition
+Image = GS_Rescaled / GS_Rescaled.max()
 
 # PSO step 1 - Initialization
-AlphaF_Range = [-1,1]
-AlphaL_Range = [-1,1]
-AlphaT_Range = [-1,1]
+AlphaF_Range = np.array([-1,1])
+AlphaL_Range = np.array([-1,1])
+AlphaT_Range = np.array([-1,1])
 
-VF_Range = [-1,1]
-VL_Range = [-1,1]
-VT_Range = [-1,1]
+VF_Range = np.array([-1,1])
+VL_Range = np.array([-1,1])
+VT_Range = np.array([-1,1])
 
-Beta_Range = [-1,1]
+Beta_Range = np.array([-1,1])
 
 Ranges = np.array([AlphaF_Range,AlphaL_Range,AlphaT_Range,
                    VF_Range,VL_Range,VT_Range,Beta_Range])
@@ -304,9 +307,9 @@ P_Best = X.copy()
 
 
 ## Start loop
-Average_FVs = np.zeros(3)
+Average_FVs = np.array([1,0,0])
 NIteration = 0
-while NIteration < 100 and Average_FVs.mean() <= Average_FV:
+while NIteration < 100 and Average_FVs.std() >= Average_FV_std:
 
     ## PSO step 3 - Update positions and velocities
     R1, R2 = np.random.uniform(0, 1, 2)
@@ -368,7 +371,9 @@ ParametersDictionary = {'AlphaF': -0.2381907530225938,
                         'Beta': -1.0}
 
 Disk = morphology.disk(2)
-BW_Dilate = morphology.binary_dilation(Y,Disk)
+BW_Erode = morphology.binary_erosion(Y,Disk)
+Disk = morphology.disk(2+10+5)
+BW_Dilate = morphology.binary_dilation(BW_Erode,Disk)
 PlotArray(BW_Dilate, 'Dilated segmentation')
 
 Labels = measure.label(BW_Dilate,connectivity=2)
@@ -376,21 +381,24 @@ Properties = ('label', 'area', 'orientation', 'euler_number')
 PropertiesTable = pd.DataFrame(measure.regionprops_table(Labels,properties=Properties))
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.plot(PropertiesTable['area'], marker='o',linestyle='none',color=(1,0,0),fillstyle='none')
+Axes.plot(PropertiesTable['euler_number'], marker='o',linestyle='none',color=(1,0,0),fillstyle='none')
 plt.show()
 plt.close(Figure)
 
-PropertiesTable.sort_values('area')
-RegionsLabels = [3, 20, 31]
+PropertiesTable.sort_values('euler_number').iloc[:11]['label'].values
+RegionsLabels = [  1, 106, 113, 168,  81,  13, 136, 212, 209, 153,  26]
 
-for Region in Regions:
+for Region in RegionsLabels:
     PlotROI(Y, Region, Labels)
 
 
 
 
-
-
+# Find PCNN parameters for harvesian channels
+# Compute distances from harvesian channels
+# Find PCNN parameters for cement lines
+# Watershed from harvesian with cement lines limits and distances
+###############################################################
 
 
 
