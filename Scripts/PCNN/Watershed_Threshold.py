@@ -115,7 +115,7 @@ plt.tight_layout()
 plt.show()
 plt.close(Figure)
 
-# Find local minima
+# Find local extrema
 Minima = np.array([])
 Maxima = np.array([])
 for x in range(1,len(HSmooth)-1):
@@ -130,6 +130,7 @@ for x in range(1,len(HSmooth)-1):
 
 Theta = 0.001
 LeftSidePeak = np.array([])
+Peaks = np.array([])
 for Minimum in Minima:
 
     Area = 0
@@ -146,8 +147,40 @@ for Minimum in Minima:
             RightArea = 0
         Area += LeftArea + RightArea
 
-        Index = Maxima[Maxima < Minimum - N][-1]
+    Index = Maxima[Maxima < Minimum - N][-1]
+    Peaks = np.concatenate([Peaks,np.array([Index])])
 
     LeftSidePeak = np.concatenate([LeftSidePeak,np.array([Minimum+N])])
 
 
+# Pulse-Connected Neural Network (PCNN) algorithm
+Rows, Columns = S.shape
+Y = np.zeros((Rows, Columns))
+T = np.zeros((Rows, Columns))
+W = GaussianKernel(3,1)
+
+## Feeding and linkin inputs
+F = S
+L = Y
+
+# Loop
+N = 0
+for m in range(len(Minima)):
+
+    N += 1
+    L = correlate(Y, W, output='float', mode='reflect')
+    Beta = Minima[m] / Peaks[m] - 1
+    U = F * (1 + Beta*L)
+    Y = (U > Minima[m]) * 1
+    T += N * Y
+
+# Results
+T = (T - T.min()) / (T.max() - T.min()) * 255
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(T, cmap='gray', vmin=0, vmax=255)
+plt.axis('off')
+plt.title('Output')
+plt.tight_layout()
+plt.show()
+plt.close(Figure)
