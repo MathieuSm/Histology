@@ -98,10 +98,10 @@ V_Mean = np.mean(V[GrayImage == 1])
 V_Var = np.var(V[GrayImage == 1],ddof=1)
 
 S_U = 255 / np.exp((U - U_Mean)**2 / U_Var)
-S_U = np.round(F_U).astype('uint8')
+S_U = np.round(S_U).astype('uint8')
 
 S_V = 255 / np.exp((V - V_Mean)**2 / V_Var)
-S_V = np.round(F_V).astype('uint8')
+S_V = np.round(S_V).astype('uint8')
 
 Beta_U = 0.5
 Beta_V = 0.5
