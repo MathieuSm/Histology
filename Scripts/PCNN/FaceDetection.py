@@ -27,6 +27,16 @@ def RGB2YUV(RGBArray):
     YUV[:, :, 1:] += 128.0
 
     return np.round(YUV).astype('uint8')
+def RGB2Gray(RGBImage):
+    """
+    This function convert color image to gray scale image
+    based on matplotlib linear approximation
+    """
+
+    R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
+    Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
+
+    return Gray
 
 
 # Read input
@@ -69,6 +79,64 @@ Axes[1].axis('off')
 Axes[2].imshow(V, cmap='gray')
 Axes[2].set_title('V channel')
 Axes[2].axis('off')
+plt.tight_layout()
+plt.show()
+plt.close(Figure)
+
+# Load segmented face
+Seg_Image = sitk.ReadImage(DataDirectory + 'Lena_Seg.jpg')
+Seg_Array = sitk.GetArrayFromImage(Seg_Image)
+GrayImage = RGB2Gray(Seg_Array)
+GrayImage[GrayImage < 245] = 0
+GrayImage[GrayImage > 245] = 1
+
+# Extract face pixels mean and variance
+U_Mean = np.mean(U[GrayImage == 1])
+U_Var = np.var(U[GrayImage == 1],ddof=1)
+
+V_Mean = np.mean(V[GrayImage == 1])
+V_Var = np.var(V[GrayImage == 1],ddof=1)
+
+S_U = 255 / np.exp((U - U_Mean)**2 / U_Var)
+S_U = np.round(F_U).astype('uint8')
+
+S_V = 255 / np.exp((V - V_Mean)**2 / V_Var)
+S_V = np.round(F_V).astype('uint8')
+
+Beta_U = 0.5
+Beta_V = 0.5
+
+Theta = 255 * np.ones(S_U.shape)
+dT = 1
+Vt = 400
+
+FireNumber = 0
+N = 0
+F = S_U
+Beta = Beta_U
+W = np.array([[0.5, 1, 0.5],
+              [1, 0, 1],
+              [0.5, 1, 0.5]])
+while FireNumber < F.size:
+
+    N += 1
+
+    L = correlate(Y, W, output='float', mode='reflect')
+    H = correlate(Y, W, output='float', mode='reflect')
+    U = F * (1 + Beta*L) * (1 - Gamma*H)
+    Theta = Theta - dT + Vt * Y
+    Y = (U > Theta) * 1
+    T += N * Y
+    FireNumber += sum(sum(Y))
+
+T = 256 - T
+T = (T - T.min()) / (T.max() - T.min()) * 255
+
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.imshow(F_V,cmap='gray')
+plt.axis('off')
+plt.title('Segmented Face')
 plt.tight_layout()
 plt.show()
 plt.close(Figure)
