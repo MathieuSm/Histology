@@ -11,12 +11,27 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from scipy.ndimage import correlate
+from scipy.ndimage import correlate, convolve
 from skimage.transform import rescale, rotate
 from skimage.util import random_noise
-from skimage.filters import median
+from skimage.filters import median, laplace, gaussian
 
+def PlotArray(Array,Title):
 
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+    Axes.imshow(Array, cmap='gray')
+    plt.axis('off')
+    plt.title(Title)
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
+def NormalizeArray(Array):
+
+    N_Array = (Array - Array.min()) / (Array.max()-Array.min())
+
+    return N_Array
 def RGB2Gray(RGBImage):
     """
     This function convert color image to gray scale image
@@ -47,12 +62,7 @@ DataDirectory = os.path.join(CurrentDirectory,'Scripts/PCNN/')
 Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
 Array = sitk.GetArrayFromImage(Image)
 Input = RGB2Gray(Array)
-
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Input,cmap='gray',vmin=0,vmax=255)
-plt.axis('off')
-plt.title('Input')
-plt.show()
+PlotArray(Input,'Input')
 
 S = (Input-Input.min()) / (Input.max()-Input.min()) * 255
 S = np.round(S).astype('uint8')
@@ -86,12 +96,8 @@ plt.close(Figure)
 Input = np.ones((256, 256)) * 230
 Input[64:192, 64:192] = 205
 Input[:, 128:] = np.round(Input[:, 128:] * 0.5)
+PlotArray(Input,'Input')
 
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Input,cmap='gray',vmin=0,vmax=255)
-plt.axis('off')
-plt.title('Input')
-plt.show()
 
 S = Input
 Rows, Columns = S.shape
@@ -127,12 +133,8 @@ while FiredNumber < S.size:
     FiredNumber = FiredNumber + sum(sum(Y))
 
 Output = 256 - T
+PlotArray(Output,'Output')
 
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Output,cmap='gray',vmin=0,vmax=255)
-plt.axis('off')
-plt.title('Output')
-plt.show()
 
 
 # Algorithm x, feature extraction
@@ -180,12 +182,8 @@ def SpikingCorticalModel(S):
 Image = sitk.ReadImage(DataDirectory + 'D12.png')
 Array = sitk.GetArrayFromImage(Image)
 Input = RGB2Gray(Array)
+PlotArray(Input,'Input')
 
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Input,cmap='gray',vmin=0,vmax=255)
-plt.axis('off')
-plt.title('Input')
-plt.show()
 
 NScaling, NRotation = 2, 3
 Figure, Axes = plt.subplots(NScaling*NRotation, 3, figsize=(5.5*NScaling, 4.5*NRotation))
@@ -198,7 +196,7 @@ for Scaling in range(1,NScaling+1):
     for Rotation in range(1,NRotation+1):
         RotatedInput = rotate(ScaledInput,Rotation*30-30,resize=True)
         RotatedInput = CropCenter(RotatedInput, CropX, CropY)
-        RotatedInput_Normalized = (RotatedInput-RotatedInput.min()) / (RotatedInput.max()-RotatedInput.min()) * 255
+        RotatedInput_Normalized = NormalizeArray(RotatedInput)
         H = PCNN_Histogram(RotatedInput_Normalized)
         TS = SpikingCorticalModel(RotatedInput)
 
@@ -221,19 +219,29 @@ plt.close(Figure)
 Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
 Array = sitk.GetArrayFromImage(Image)
 Input = RGB2Gray(Array)
+PlotArray(Input,'Input')
+
 
 Rows, Columns = Input.shape
 Size = Input.size
 
 J = random_noise(Input, mode='gaussian', seed=None, clip=True, mean=0, var=0.001)
+J = NormalizeArray(J)
+PlotArray(J,'Noised')
+
+
 Input_Median = median(J,mode='reflect')
-Input_mean = correlate(J,np.ones((3,3))/9,mode='reflect')
+Input_Median = NormalizeArray(Input_Median)
+PlotArray(Input_Median,'Median')
+Input_Mean = correlate(J,np.ones((3,3))/9,mode='reflect')
+Input_Mean = NormalizeArray(Input_Mean)
+PlotArray(Input_Mean,'Mean')
 
 U = np.zeros(Input.shape)
 E = U + 1
-Y = U
-B = U
-T = U
+Y = np.zeros(Input.shape)
+B = np.zeros(Input.shape)
+T = np.zeros(Input.shape)
 
 f = 0.03
 g = 0.99
@@ -248,9 +256,12 @@ while sum(sum(B)) < Size:
         for j in range(Columns):
 
             U[i, j] = J[i, j] + f * U[i, j]
-            Q = 1 / (1 + np.exp(-gamma * (U[i, j] - E[i, j])))
+            if E[i, j] > 1E2:
+                Q = 0
+            else:
+                Q = 1 / (1 + np.exp(-gamma * (U[i, j] - E[i, j])))
 
-            if Q > 0.5 | E[i, j] < 0.08:
+            if Q > 0.5 or E[i, j] < 0.08:
                 Y[i, j] = 1
                 B[i, j] = 1
                 T[i, j] = N
@@ -261,69 +272,168 @@ while sum(sum(B)) < Size:
     E[B != 1] = g * E[B != 1]
 
 S = np.pad(J,1,'symmetric')
+T = np.pad(T,1,'symmetric')
+I_SCM = np.zeros(Input.shape)
+Delta = 0.02
 
-S = padarray(J,[1 1],'symmetric');
-Time_matrix = padarray(T,[1 1],'symmetric');
-I_SCM = zeros(r,c);
-Delta = 0.02;
-for ii = 2:r+1
-    for jj = 2:c+1
-        K = Time_matrix(ii-1:ii+1,jj-1:jj+1);
-        if isequal(K(1),K(2),K(3),K(4),K(5),K(6),K(7),K(8),K(9))
-            I_SCM(ii-1,jj-1) = 1/9*(sum(sum(S(ii-1:ii+1,jj-1:jj+1))));
-        else
-            tmp = sort(K);
-            if tmp(5) == K(5)
-                I_SCM(ii-1,jj-1) = S(ii,jj);
-            elseif tmp(1) == K(5)
-                I_SCM(ii-1,jj-1) = S(ii,jj) - Delta;
-            elseif tmp(9) == K(5)
-                I_SCM(ii-1,jj-1) = S(ii,jj) + Delta;
-            else
-                kk = medfilt2(S(ii-1:ii+1,jj-1:jj+1));
-                I_SCM(ii-1,jj-1) = kk(5);
-            end
-        end
-    end
-end
-%_______________________________________
-PSNR_SCM = psnr_mse_maxerr(255*I,255*I_SCM)
+for i in range(1,Rows+1):
+    for j in range(1,Columns+1):
 
+        K = T[i-1:i+2,j-1:j+2].flatten()
+
+        if len(np.unique(K)) == 1:
+            I_SCM[i-1, j-1] = 1/9 * sum(sum(S[i-1:i+2, j-1:j+2]))
+        else:
+            Sorted = np.sort(K)
+
+            if Sorted[4] == K[4]:
+                I_SCM[i-1, j-1] = S[i, j]
+            elif Sorted[0] == K[4]:
+                I_SCM[i-1, j-1] = S[i, j] - Delta
+            elif Sorted[-1] == K[4]:
+                I_SCM[i-1, j-1] = S[i, j] + Delta
+            else:
+                I_SCM[i-1, j-1] = np.median(S[i-1:i+2, j-1:j+2])
+I_SCM = NormalizeArray(I_SCM)
+PlotArray(I_SCM,'SCM')
 
 
 # Algorithm y - Image enhancement (Feature Linking Model FLM)
-I = imread('tire.tif');
+def GrayStretch(I,Per):
 
-funInverse = @(x) max(max(x)) + 1 - x;
-funNormalize = @(x) ( x-min(min(x)))/( max(max(x))-min(min(x)) + eps);
-[r,c] = size(I);  rc = r*c;
-S = funNormalize(double(I)) + 1/255;
-W=[0.7 1 0.7; 1  0  1 ; 0.7 1 0.7;];
-Y=zeros(r,c);   U = Y;  Time = Y; sumY = 0;  n = 0;
-%_____________________Theta_0______________
-Lap = fspecial('laplacian',0.2);
-Theta = 1 + imfilter(S,Lap,'symmetric');
-%_____________________f____________________
-f = 0.75 * exp(-(S).^2 / 0.16) + 0.05;
-G = fspecial('gaussian',7,1);
-f = imfilter(f,G,'symmetric');
-%___________________Parameters____________
-h = 2e10; d = 2; g = 0.9811; alpha = 0.01; beta = 0.03;
-while sumY < rc
-    n = n + 1;
-    K = conv2(Y,W,'same');
-    Wave = alpha * K + beta .* S .* (K - d);
-    U = f.*U + S + Wave;
-    Theta = g*Theta + h.*Y;
-    Y = double(U > Theta);
-    Time = Time + n .* Y;
-    sumY = sumY + sum(Y(:));
-end
-Rep = funInverse(Time);
-Rep = funNormalize(Rep);
-Rep = uint8(Rep * 255);
-Rep1gs = GrayStretch(Rep,0.98);
+    m, M = FindingMm(I,Per)
+    # m, M = 186, 255
+    GS = ((I-m) / (M-m) * 255).astype('uint8')
 
-imshow([I, J])
+    return GS
+def FindingMm(I,Per):
+    h = PCNN_Histogram(I)
+    All = sum(h)
+    ph = h / All
+    mth_ceiling = BoundFinding(ph,Per)
+    Mph = ph[::-1]
+    Mth_floor = BoundFinding(Mph,Per)
+    Mth_floor = 256 - Mth_floor + 1
+    Difference = np.zeros((256,256)) + np.inf
+    for m in range(mth_ceiling,0,-1):
+        for M in range(Mth_floor,256):
+            if h[m] > 0 and h[M] > 0:
+                if np.sum(h[m:M+1]) / All >= Per:
+                    Difference[m,M] = M - m
+
+    minD = Difference.min()
+    m, M = np.where(Difference == minD)
+    minI = m[0]
+    MaxI = M[0]
+
+    return [minI,MaxI]
+def BoundFinding(ph,Per):
+    cumP = np.cumsum(ph)
+    n = 1
+    residualP = 1 - Per
+    while cumP[n-1] < residualP:
+        n += 1
+
+    m_ceiling = n
+
+    return m_ceiling
+def PCNN_Histogram(S):
+
+    Theta = 255
+    Delta = 1
+    Vt = 256
+    Y = np.zeros(S.shape)
+    H = np.zeros(256)
+
+    # Perform analysis
+    for N in range(256):
+        U = S
+        Theta = Theta - Delta + Vt * Y
+        Y = np.where((U - Theta) > 0, 1, 0)
+        H[255 - N] = Y.sum()
+
+    return H
 
 
+Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
+Array = sitk.GetArrayFromImage(Image)
+Input = RGB2Gray(Array)
+PlotArray(Input,'Input')
+
+S = (Input - Input.min()) / (Input.max()-Input.min()) + 1/255
+W = np.array([[0.7, 1, 0.7],[1, 0, 1],[0.7, 1, 0.7]])
+Y = np.zeros(S.shape)
+U = np.zeros(S.shape)
+T = np.zeros(S.shape)
+SumY = 0
+N = 0
+
+Laplacian = np.array([[1/6, 2/3, 1/6],[2/3, -10/3, 2/3],[1/6, 2/3, 1/6]])
+Theta = 1 + correlate(S,Laplacian,mode='reflect')
+# Theta = 1 + laplace(S,ksize=3)
+f = 0.75 * np.exp(-S**2 / 0.16) + 0.05
+G = GaussianKernel(7,1)
+f = correlate(f, G, mode='reflect')
+# f = gaussian(f,sigma=1,mode='reflect')
+
+h = 2E10
+d = 2
+g = 0.9811
+Alpha = 0.01
+Beta = 0.03
+
+while SumY < S.size:
+
+    N += 1
+
+    K = correlate(Y,W,mode='reflect')
+    Wave = Alpha * K + Beta * S * (K - d)
+    U = f * U + S + Wave
+    Theta = g * Theta + h * Y
+    Y = (U > Theta) * 1
+    T += N * Y
+    SumY += sum(sum(Y))
+    # print(SumY)
+
+T_inv = T.max() + 1 - T
+Time = (NormalizeArray(T_inv) * 255).astype('uint8')
+Stretched = GrayStretch(Time,0.99)
+PlotArray(Stretched,'Output')
+
+
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Axes.hist(Input.flatten(), bins=np.arange(0,256), density=True, color=(0,0,1), label='Original')
+Axes.hist(Stretched.flatten(), bins=np.arange(0,256), density=True, color=(1,0,0), label='Enhanced')
+plt.legend(loc='upper left')
+plt.tight_layout()
+plt.show()
+plt.close(Figure)
+
+H = PCNN_Histogram(Stretched)
+Indices = np.where(H == 0)[0]
+Suite = np.concatenate([np.diff(Indices),np.array([0])])
+Low, High = np.array([0]), np.array([])
+i = 0
+while i < len(H):
+    n = 0
+    while H[i+n] == 0:
+        n += 1
+    if n > 2:
+        High = np.concatenate([High,np.array([i])]).astype('int')
+        Low = np.concatenate([Low,np.array([i+n-1])]).astype('int')
+        i += n
+    else:
+        i += 1
+High = np.concatenate([High,np.array([255])])
+
+Seg = np.zeros(Stretched.shape)
+for n in range(len(High)):
+    F1 = Stretched > Low[n]
+    F2 = Stretched < High[n]
+    Seg[F1*F2] = n
+
+a = Seg.copy()
+b = np.unique(Seg)
+a[a != b[6]] = 100
+PlotArray(a,'Seg')
