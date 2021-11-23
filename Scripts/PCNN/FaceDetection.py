@@ -103,6 +103,7 @@ S_U = np.round(S_U).astype('uint8')
 S_V = 255 / np.exp((V - V_Mean)**2 / V_Var)
 S_V = np.round(S_V).astype('uint8')
 
+
 Beta_U = 0.5
 Beta_V = 0.5
 
@@ -117,6 +118,8 @@ Beta = Beta_U
 W = np.array([[0.5, 1, 0.5],
               [1, 0, 1],
               [0.5, 1, 0.5]])
+Gamma = 0.2
+T = np.zeros(S_U.shape)
 while FireNumber < F.size:
 
     N += 1
@@ -134,7 +137,7 @@ T = (T - T.min()) / (T.max() - T.min()) * 255
 
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(F_V,cmap='gray')
+Axes.imshow(T,cmap='gray')
 plt.axis('off')
 plt.title('Segmented Face')
 plt.tight_layout()

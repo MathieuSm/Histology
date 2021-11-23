@@ -15,6 +15,16 @@ desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
 plt.rc('font', size=12)
 
+def RGB2Gray(RGBImage):
+    """
+    This function convert color image to gray scale image
+    based on matplotlib linear approximation
+    """
+
+    R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
+    Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
+
+    return np.round(Gray).astype('uint8')
 def SaveImage(Image,Name):
 
     from skimage import io
@@ -173,10 +183,159 @@ def PlotROI(ImageArray, RegionLabel, Labels):
     return
 
 
+class PCNN:
+
+    """
+    Define a class of Pulse-Connected Neural Network (PCNN) for image analysis
+    Initially aimed to be used for cement lines segmentation
+    Author: Mathieu Simon
+            ARTORG Center for Biomedical Engineering Research
+            SITEM Insel
+            University of Bern
+    Date: November 2021
+
+    Package needed:
+    time
+    numpy
+    correlate from scipy
+
+    """
+
+    def __init__(self,Image):
+        self.Image = Image
+
+    def PrintTime(Tic,Toc):
+
+        """
+        Print elapsed time in seconds to time in HH:MM:SS format
+        :param Tic: Actual time at the beginning of the process
+        :param Toc: Actual time at the end of the process
+        """
+
+        Delta = Toc - Tic
+        Seconds = int(np.mod(Delta,60).round())
+        Minutes = np.floor(Delta/60)
+
+    def Histogram(self):
+
+        """
+        Compute image histogram
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param Image: Grayscale intensity image in numpy array
+        :return: H: Image histogram in numpy array
+        """
+
+        Tic = time.time()
+
+        # Initialize PCNN
+        MaxS = np.ceil(self.Image.max()).astype('int')
+        Theta = MaxS
+        Delta = 1
+        Vt = MaxS + 1
+        Y = np.zeros(self.Image.shape)
+        U = self.Image
+        H = np.zeros(MaxS + 1)
+
+        # Perform histogram analysis
+        for N in range(MaxS + 1):
+            Theta = Theta - Delta + Vt * Y
+            Y = np.where((U - Theta) > 0, 1, 0)
+            H[MaxS - N] = Y.sum()
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return H
+
+    def Segmentation(self,Beta=2,Delta=1,Vt=400):
+
+        """
+        Segment image using single neuron firing and fast linking implementation
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param Image: Grayscale intensity image in numpy array
+        :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+        :param Delta: Linear decay factor for threshold level
+        :param Vt: Dynamic threshold amplitude
+        :return: H: Image histogram in numpy array
+        """
+
+        Tic = time.time()
+
+        # Initialize parameters
+        S = self.Image
+        Rows, Columns = S.shape
+        Y = np.zeros((Rows, Columns))
+        T = np.zeros((Rows, Columns))
+        W = np.array([[0.5, 1, 0.5],
+                      [1, 0, 1],
+                      [0.5, 1, 0.5]])
+        F = S
+        Theta = 255 * np.ones((Rows, Columns))
+
+        FiredNumber = 0
+        N = 0
+
+        # Perform segmentation
+        while FiredNumber < S.size:
+
+            N += 1
+            L = correlate(Y, W, output='float', mode='reflect')
+            Theta = Theta - Delta + Vt * Y
+            Fire = 1
+
+            while Fire == 1:
+
+                Q = Y
+                U = F * (1 + Beta * L)
+                Y = (U > Theta) * 1
+                if np.array_equal(Q, Y):
+                    Fire = 0
+                else:
+                    L = correlate(Y, W, output='float', mode='reflect')
+
+            T = T + N * Y
+            FiredNumber = FiredNumber + sum(sum(Y))
+
+        Output = 256 - T
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Output
+
 
 # Set path
 CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
+
+# Open image to segment
+Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
+Array = sitk.GetArrayFromImage(Image)
+PlotArray(Array, 'RGB Image')
+GS = RGB2Gray(Array)
+PlotArray(GS, 'Grayscale Image')
+
+
+
+
+PCNN = PCNN(GS)
+H = PCNN.Histogram()
+
+Output = PCNN.Segmentation()
+PlotArray(Output, 'Segmented Image')
+
 
 # Open manually segmented image
 SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test2_Seg.png')
