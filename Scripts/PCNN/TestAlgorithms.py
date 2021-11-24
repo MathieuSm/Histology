@@ -302,7 +302,6 @@ PlotArray(I_SCM,'SCM')
 def GrayStretch(I,Per):
 
     m, M = FindingMm(I,Per)
-    # m, M = 186, 255
     GS = ((I-m) / (M-m) * 255).astype('uint8')
 
     return GS

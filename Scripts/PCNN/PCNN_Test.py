@@ -3,6 +3,7 @@ Code for testing PCNN-PSO-AT with different inputs or fitness function
 """""
 
 import os
+import time
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
@@ -36,27 +37,6 @@ def NormalizeArray(Array):
     Normalized_Array = (Array - Array.min()) / (Array.max() - Array.min()) * 255
 
     return np.round(Normalized_Array).astype('uint8')
-def PlotArray(Array, Title, ColorBar=False):
-
-    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-    CBar = Axes.imshow(Array, cmap='gray')
-    if ColorBar:
-        plt.colorbar(CBar)
-    plt.title(Title)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-    plt.close(Figure)
-
-    return
-def GaussianKernel(Length=5, Sigma=1.):
-    """
-    Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
-    """
-    Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
-    Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
-    Kernel = np.outer(Gauss, Gauss)
-    return Kernel / sum(sum(Kernel))
 def BetweenClassVariance(GrayScale, Segmented):
 
     Ignited_Neurons = Segmented == 1
@@ -182,7 +162,102 @@ def PlotROI(ImageArray, RegionLabel, Labels):
 
     return
 
+# Define utilities functions
+def PlotArray(Array, Title, ColorBar=False):
 
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+    CBar = Axes.imshow(Array, cmap='gray')
+    if ColorBar:
+        plt.colorbar(CBar)
+    plt.title(Title)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
+def PrintTime(Tic, Toc):
+    """
+    Print elapsed time in seconds to time in HH:MM:SS format
+    :param Tic: Actual time at the beginning of the process
+    :param Toc: Actual time at the end of the process
+    """
+
+    Delta = Toc - Tic
+
+    Hours = np.floor(Delta / 60 / 60)
+    Minutes = np.floor(Delta / 60) - 60 * Hours
+    Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
+
+    print('\nProcess executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+def NormalizeValues(Image):
+
+    """
+    Normalize image values, used in PCNN for easier parameters handling
+    :param Image: Original grayscale image
+    :return: N_Image: Image with 0,1 normalized values
+    """
+
+    N_Image = (Image - Image.min()) / (Image.max()-Image.min())
+
+    return N_Image
+def GaussianKernel(Length=5, Sigma=1.):
+    """
+    Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+    """
+    Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+    Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+    Kernel = np.outer(Gauss, Gauss)
+    return Kernel / sum(sum(Kernel))
+def GrayStretch(Image, StretchPercentile):
+
+    """
+    Crop and keep a ratio of grayscale
+    :param Image: Initial grayscale image
+    :param StretchPercentile: percentile to stretch gray values
+    :return: GC: Gray scale image with stretched gray values
+    """
+
+    m, M = FindingMm(Image, StretchPercentile)
+    GC = (Image - m) / (M - m)
+    GC[GC > 1] = 1
+    GC[GC < 0] = 0
+
+    return GC
+def FindingMm(Image, Per):
+
+    PCNN_Tools = PCNN()
+    PCNN_Tools.Set_Image(Image)
+    H, Bins = PCNN_Tools.Histogram()
+    All = sum(H)
+    H_Per = H / All
+    mth_ceil = BoundFinding(H_Per, Per)
+    H_PerM = H_Per[::-1]
+    Mth_floor = BoundFinding(H_PerM, Per)
+    Mth_floor = len(H) + 1 - Mth_floor + 1
+    Difference = np.zeros((256, 256)) + np.inf
+    for m in range(mth_ceil, 0, -1):
+        for M in range(Mth_floor, len(H)):
+            if H[m] > 0 and H[M] > 0:
+                if np.sum(H[m:M + 1]) / All >= Per:
+                    Difference[m, M] = M - m
+
+    minD = Difference.min()
+    m, M = np.where(Difference == minD)
+    minI = m[0]
+    MaxI = M[0]
+
+    return [minI, MaxI]
+def BoundFinding(H_Per, Per):
+    Cum_Per = np.cumsum(H_Per)
+    N = 1
+    Residual_Per = 1 - Per
+    while Cum_Per[N - 1] < Residual_Per:
+        N += 1
+
+    return N
+
+# Define PCNN class
 class PCNN:
 
     """
@@ -197,26 +272,27 @@ class PCNN:
     Package needed:
     time
     numpy
-    correlate from scipy
+    correlate from scipy.ndimage
 
+    !!! No computational cost efficiency implementation -> start with small images for tests !!!
     """
 
-    def __init__(self,Image):
+    def __init__(self):
+        return
+
+
+    # Set PCNN attributes
+    def Set_Image(self,Image):
+        """
+        Define PCNN attributes
+        :param Image: Grayscale intensity image in numpy array
+        """
         self.Image = Image
+        return
 
-    def PrintTime(Tic,Toc):
 
-        """
-        Print elapsed time in seconds to time in HH:MM:SS format
-        :param Tic: Actual time at the beginning of the process
-        :param Toc: Actual time at the end of the process
-        """
-
-        Delta = Toc - Tic
-        Seconds = int(np.mod(Delta,60).round())
-        Minutes = np.floor(Delta/60)
-
-    def Histogram(self):
+    # Define PCNN functions
+    def Histogram(self,NBins=256):
 
         """
         Compute image histogram
@@ -226,32 +302,35 @@ class PCNN:
         Arch Computat Methods Eng 24, 573–588 (2017).
         https://doi.org/10.1007/s11831-016-9182-3
 
-        :param Image: Grayscale intensity image in numpy array
+        :param: NBins: Number of histogram bins
         :return: H: Image histogram in numpy array
         """
 
         Tic = time.time()
 
         # Initialize PCNN
-        MaxS = np.ceil(self.Image.max()).astype('int')
-        Theta = MaxS
-        Delta = 1
-        Vt = MaxS + 1
-        Y = np.zeros(self.Image.shape)
-        U = self.Image
-        H = np.zeros(MaxS + 1)
+        MaxS = self.Image.max()
+        S = NormalizeValues(self.Image)
+        Theta = 1
+        Delta = 1 / (NBins - 1)
+        Vt = 1 + Delta
+        Y = np.zeros(S.shape)
+        U = S
+        H = np.zeros(NBins)
 
         # Perform histogram analysis
-        for N in range(MaxS + 1):
+        for N in range(1,NBins+1):
             Theta = Theta - Delta + Vt * Y
             Y = np.where((U - Theta) > 0, 1, 0)
-            H[MaxS - N] = Y.sum()
+            H[NBins - N] = Y.sum()
 
         # Print time elapsed
         Toc = time.time()
         PrintTime(Tic, Toc)
 
-        return H
+        Bins = np.arange(0,MaxS+Delta,Delta*MaxS)
+
+        return H, Bins
 
     def Segmentation(self,Beta=2,Delta=1,Vt=400):
 
@@ -263,7 +342,6 @@ class PCNN:
         Arch Computat Methods Eng 24, 573–588 (2017).
         https://doi.org/10.1007/s11831-016-9182-3
 
-        :param Image: Grayscale intensity image in numpy array
         :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
         :param Delta: Linear decay factor for threshold level
         :param Vt: Dynamic threshold amplitude
@@ -273,7 +351,7 @@ class PCNN:
         Tic = time.time()
 
         # Initialize parameters
-        S = self.Image
+        S = NormalizeValues(self.Image)
         Rows, Columns = S.shape
         Y = np.zeros((Rows, Columns))
         T = np.zeros((Rows, Columns))
@@ -315,6 +393,184 @@ class PCNN:
 
         return Output
 
+    def TimeSeries(self,N=40):
+
+        """
+        Extract invariant image features using Spiking Cortical Model (SCM)
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param N: Dynamic threshold amplitude
+        :return: TS: Image time series in numpy array
+        """
+
+        Tic = time.time()
+
+        # Initialization
+        S = NormalizeValues(self.Image)
+        W = np.array([[0.1091, 0.1409, 0.1091],
+                      [0.1409, 0, 0.1409],
+                      [0.1091, 0.1409, 0.1091]])
+        Y = np.zeros(S.shape)
+        U = Y
+        E = Y + 1
+        TS = np.zeros(N)
+
+        # Analysis
+        for Time in range(N):
+            U = 0.2 * U + S * correlate(Y, W, output='float', mode='reflect') + S
+            E = 0.9 * E + 20 * Y
+            X = 1 / (1 + np.exp(E - U))
+            Y = (X > 0.5) * 1
+            TS[Time] = sum(sum(Y))
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return TS
+
+    def Restoration(self, f=0.03, g=0.99, Gamma=1., Delta=0.02):
+
+        """
+        Perform image restoration, filtering to remove noise using Spiking Cortical Model (SCM)
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param: f: Decay factor for external input U(n) = S + f * U(n-1)
+        :param: g: Decay factor for threshold E(n) = g * E(n-1) * (1-B)
+        :param: Gamma: Amplitude factor for activation intensity
+        :param: Delta: Weight factor for value averaging
+        :return: Y: Restored Image
+        """
+
+        Tic = time.time()
+
+        # Initialization
+        S = NormalizeValues(self.Image)
+        Rows, Columns = S.shape
+        U = np.zeros(S.shape)
+        E = U + 1
+        Y = np.zeros(S.shape)
+        B = np.zeros(S.shape)
+        T = np.zeros(S.shape)
+        N = 0
+
+        # Analysis - T image of similar gray intensities
+        while sum(sum(B)) < S.size:
+
+            N += 1
+
+            for i in range(Rows):
+                for j in range(Columns):
+
+                    U[i, j] = S[i, j] + f * U[i, j]
+                    if E[i, j] > 1E2:
+                        Q = 0
+                    else:
+                        Q = 1 / (1 + np.exp(-Gamma * (U[i, j] - E[i, j])))
+
+                    if Q > 0.5 or E[i, j] < 0.08:
+                        Y[i, j] = 1
+                        B[i, j] = 1
+                        T[i, j] = N
+                        E[i, j] = 100000
+                    else:
+                        Y[i, j] = 0
+
+            E[B != 1] = g * E[B != 1]
+
+        # Analysis - Average T values
+        Y = np.zeros(S.shape)
+        S = np.pad(S, 1, 'symmetric')
+        T = np.pad(T, 1, 'symmetric')
+
+        for i in range(1, Rows + 1):
+            for j in range(1, Columns + 1):
+
+                K = T[i - 1:i + 2, j - 1:j + 2].flatten()
+
+                if len(np.unique(K)) == 1:
+                    Y[i - 1, j - 1] = 1 / 9 * sum(sum(S[i - 1:i + 2, j - 1:j + 2]))
+                else:
+                    Sorted = np.sort(K)
+
+                    if Sorted[4] == K[4]:
+                        Y[i - 1, j - 1] = S[i, j]
+                    elif Sorted[0] == K[4]:
+                        Y[i - 1, j - 1] = S[i, j] - Delta
+                    elif Sorted[-1] == K[4]:
+                        Y[i - 1, j - 1] = S[i, j] + Delta
+                    else:
+                        Y[i - 1, j - 1] = np.median(S[i - 1:i + 2, j - 1:j + 2])
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Y
+
+    def Enhancement(self, d=2, h=2E10, g=0.9811, Alpha=0.01, Beta=0.03):
+
+        """
+        Perform image enhancement using Feature Linking Model (FLM)
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param: d: Inhibition factor for linkin wave
+        :param: h: Amplitude factor for threshold excitation
+        :param: g: Decay factor for threshold
+        :param: Alpha: Decay factor for linkin input
+        :param: Beta: Decay factor for external input
+        :return: Y: Restored Image
+        """
+
+        Tic = time.time()
+
+        # Initialization
+        S = NormalizeValues(self.Image) + 1/255
+        W = np.array([[0.7, 1, 0.7], [1, 0, 1], [0.7, 1, 0.7]])
+        Y = np.zeros(S.shape)
+        U = np.zeros(S.shape)
+        T = np.zeros(S.shape)
+        SumY = 0
+        N = 0
+
+        Laplacian = np.array([[1 / 6, 2 / 3, 1 / 6], [2 / 3, -10 / 3, 2 / 3], [1 / 6, 2 / 3, 1 / 6]])
+        Theta = 1 + correlate(S, Laplacian, mode='reflect')
+        f = 0.75 * np.exp(-S ** 2 / 0.16) + 0.05
+        G = GaussianKernel(7, 1)
+        f = correlate(f, G, mode='reflect')
+
+        # Analysis
+        while SumY < S.size:
+            N += 1
+
+            K = correlate(Y, W, mode='reflect')
+            Wave = Alpha * K + Beta * S * (K - d)
+            U = f * U + S + Wave
+            Theta = g * Theta + h * Y
+            Y = (U > Theta) * 1
+            T += N * Y
+            SumY += sum(sum(Y))
+
+        T_inv = T.max() + 1 - T
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return T_inv
+
 
 # Set path
 CurrentDirectory = os.getcwd()
@@ -323,18 +579,81 @@ ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
 # Open image to segment
 Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
 Array = sitk.GetArrayFromImage(Image)
-PlotArray(Array, 'RGB Image')
+PlotArray(Array[:,:,2], 'RGB Image')
 GS = RGB2Gray(Array)
 PlotArray(GS, 'Grayscale Image')
 
+# Use PCNN tool
+PCNN_Tools = PCNN()
+PCNN_Tools.Set_Image(GS)
+Y = PCNN_Tools.Enhancement()
+Y_Stretched = GrayStretch(Y,0.90)
+PlotArray(Y_Stretched, 'Enhanced Image')
+
+
+H, Bins = PCNN_Tools.Histogram(NBins)
+Indices = np.where(H == 0)[0]
+Suite = np.concatenate([np.diff(Indices),np.array([0])])
+Low, High = np.array([0]), np.array([])
+i = 0
+while i < len(H):
+    n = 0
+    while H[i+n] == 0:
+        n += 1
+    if n > 2:
+        High = np.concatenate([High,np.array([i])]).astype('int')
+        Low = np.concatenate([Low,np.array([i+n-1])]).astype('int')
+        i += n
+    else:
+        i += 1
+High = np.concatenate([High,np.array([255])])
+
+Seg = np.zeros(Y_Stretched.shape)
+for n in range(len(High)):
+    F1 = Y_Stretched > Bins[Low[n]]
+    F2 = Y_Stretched < Bins[High[n]]
+    Seg[F1*F2] = n
+Seg[Y_Stretched == Bins[High[n]]] = n + 1
+
+a = Seg.copy()
+b = np.unique(Seg)
+Layer = b[-1]
+a[a != Layer] = 0
+a[a == Layer] = 1
+PlotArray(a,'Seg')
 
 
 
-PCNN = PCNN(GS)
-H = PCNN.Histogram()
+PCNN_Tools.Set_Image(Y_Stretched)
+Y_Seg = PCNN_Tools.Segmentation()
+PlotArray(Y_Seg,'Segmented Image')
 
-Output = PCNN.Segmentation()
-PlotArray(Output, 'Segmented Image')
+
+
+Threshold = 1
+Y_Thresh = np.zeros(Y_Stretched.shape)
+Y_Thresh[Y_Stretched == Threshold] = 1
+PlotArray(Y_Thresh,'Thresholded Image')
+
+Disk = morphology.disk(4)
+Segments = morphology.binary_erosion(Y_Thresh,Disk)
+Disk = morphology.disk(30)
+Segments = morphology.binary_dilation(Segments,Disk)
+PlotArray(Segments,'Segmented Image')
+
+Figure, Axes = plt.subplots(1,1,figsize=(5.5,4.5))
+Axes.imshow(Y_Stretched,cmap='gray')
+Axes.imshow(Segments,cmap='jet',alpha=0.5)
+plt.axis('off')
+plt.title('Overlay')
+plt.tight_layout()
+plt.show()
+plt.close(Figure)
+
+
+
+
+
 
 
 # Open manually segmented image
