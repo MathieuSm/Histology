@@ -189,7 +189,7 @@ def PrintTime(Tic, Toc):
     Minutes = np.floor(Delta / 60) - 60 * Hours
     Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
 
-    print('\nProcess executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+    print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
 def NormalizeValues(Image):
 
     """
@@ -218,8 +218,9 @@ def GrayStretch(Image, StretchPercentile):
     :return: GC: Gray scale image with stretched gray values
     """
 
-    m, M = FindingMm(Image, StretchPercentile)
-    GC = (Image - m) / (M - m)
+    N_Image = NormalizeValues(Image)
+    m, M = FindingMm(N_Image, StretchPercentile) / 255
+    GC = (N_Image - m) / (M - m)
     GC[GC > 1] = 1
     GC[GC < 0] = 0
 
@@ -247,7 +248,7 @@ def FindingMm(Image, Per):
     minI = m[0]
     MaxI = M[0]
 
-    return [minI, MaxI]
+    return np.array([minI, MaxI])
 def BoundFinding(H_Per, Per):
     Cum_Per = np.cumsum(H_Per)
     N = 1
@@ -256,6 +257,139 @@ def BoundFinding(H_Per, Per):
         N += 1
 
     return N
+def PSO_Algorithm(GrayScaleImage,SegmentedImage):
+
+    # Particle Swarm Optimization (PSO) algorithm
+    Ps = 20  # Population size
+    t = 0  # Iteration number
+    Max_times = 10  # Max iteration number
+    Omega = 0.9 - 0.5 * t / Max_times  # Inertia factor
+    Average_FV_std = 1E-3  # Second PSO termination condition
+    Image = NormalizeValues(GrayScaleImage)
+    PCNN_Tools = PCNN()
+    PCNN_Tools.Set_Image(Image)
+
+    # PSO step 1 - Initialization
+    AlphaF_Range = np.array([0, 1])
+    AlphaL_Range = np.array([0, 1])
+    AlphaT_Range = np.array([0, 1])
+
+    VF_Range = np.array([0, 1])
+    VL_Range = np.array([0, 1])
+    VT_Range = np.array([0, 1])
+
+    Beta_Range = np.array([0, 1])
+
+    Ranges = np.array([AlphaF_Range, AlphaL_Range, AlphaT_Range,
+                       VF_Range, VL_Range, VT_Range, Beta_Range])
+    ParameterList = ['AlphaF', 'AlphaL', 'AlphaT', 'VF', 'VL', 'VT', 'Beta']
+    Ranges = np.array([AlphaT_Range, VT_Range, Beta_Range])
+    ParameterList = ['AlphaT', 'VT', 'Beta']
+    Dimensions = len(Ranges)
+
+    C1, C2 = 2, 2
+
+    RangeAmplitudes = Ranges[:, 1] - Ranges[:, 0]
+    X = np.random.uniform(0, 1, (Ps, Dimensions)) * RangeAmplitudes + Ranges[:, 0]
+    V = np.zeros((Ps,Dimensions))
+
+    # PSO step 2 - Initial evaluation
+    print('\nInitial PSO evaluation...')
+    Initial_DSCs = np.zeros((Ps, 1))
+    for ParticleNumber in range(Ps):
+        ParametersDictionary = {}
+        for ParameterNumber in range(Dimensions):
+            ParameterName = ParameterList[ParameterNumber]
+            ParameterValue = X[ParticleNumber, ParameterNumber]
+            ParametersDictionary[ParameterName] = ParameterValue
+
+        # Perform segmentation
+        # AlphaF = ParametersDictionary['AlphaF']
+        # AlphaL = ParametersDictionary['AlphaL']
+        # VF = ParametersDictionary['VF']
+        # VL = ParametersDictionary['VL']
+        AlphaT = ParametersDictionary['AlphaT']
+        VT = ParametersDictionary['VT']
+        Beta = ParametersDictionary['Beta']
+
+        Y = PCNN_Tools.Simplified_Segmentation(Beta, AlphaT, VT)
+
+        # Compute dice similarity coefficient with manual segmentation
+        Initial_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
+
+    # Set initial best values
+    G_Best_Value = Initial_DSCs.max()
+    G_Best_Index = np.where(Initial_DSCs == G_Best_Value)[0][0]
+    G_Best = X[G_Best_Index]
+
+    P_Best_Values = Initial_DSCs.copy()
+    P_Best = X.copy()
+    print('Initial evaluation done')
+
+    ## Start loop
+    Average_FVs = np.array([1, 0, 0])
+    NIteration = 0
+    print('\nStart iterating...')
+    while NIteration < 100 and Average_FVs.std() >= Average_FV_std:
+
+        print('\nIteration number: %i' % NIteration)
+        ## PSO step 3 - Update positions and velocities
+        R1, R2 = np.random.uniform(0, 1, 2)
+        V = Omega * V + C1 * R1 * (P_Best - X) + C2 * R2 * (G_Best - X)
+        X = X + V
+        # If new position exceed limits, set to limit
+        X[X < Ranges[:, 0]] = np.tile(Ranges[:, 0], Ps).reshape((Ps, Dimensions))[X < Ranges[:, 0]]
+        X[X > Ranges[:, 1]] = np.tile(Ranges[:, 1], Ps).reshape((Ps, Dimensions))[X > Ranges[:, 1]]
+
+        ## PSO step 4 - Evaluation of the updated population
+        New_DSCs = np.zeros((Ps, 1))
+        for ParticleNumber in range(Ps):
+            ParametersDictionary = {}
+            for ParameterNumber in range(Dimensions):
+                ParameterName = ParameterList[ParameterNumber]
+                ParameterValue = X[ParticleNumber, ParameterNumber]
+                ParametersDictionary[ParameterName] = ParameterValue
+
+            # Perform segmentation
+            # AlphaF = ParametersDictionary['AlphaF']
+            # AlphaL = ParametersDictionary['AlphaL']
+            # VF = ParametersDictionary['VF']
+            # VL = ParametersDictionary['VL']
+            AlphaT = ParametersDictionary['AlphaT']
+            VT = ParametersDictionary['VT']
+            Beta = ParametersDictionary['Beta']
+
+            Y = PCNN_Tools.Simplified_Segmentation(Beta, AlphaT, VT)
+
+            # Compute dice similarity coefficient with manual segmentation
+            New_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
+
+        # Update best values if better than previous
+        if New_DSCs.max() > G_Best_Value:
+            G_Best_Value = New_DSCs.max()
+            G_Best_Index = np.where(New_DSCs == G_Best_Value)[0][0]
+            G_Best = X[G_Best_Index]
+
+        ImprovedValues = New_DSCs > P_Best_Values
+        P_Best_Values[ImprovedValues] = New_DSCs[ImprovedValues]
+        Reshaped_IP = np.tile(ImprovedValues, Dimensions).reshape((Ps, Dimensions))
+        P_Best[Reshaped_IP] = X[Reshaped_IP]
+
+        ## PSO step 5 - Update and check if terminal condition is satisfied
+        NIteration += 1
+        Average_FVs = np.concatenate([Average_FVs[1:], np.array(G_Best_Value).reshape(1)])
+        print('Fitness function best value: %f' % G_Best_Value)
+        for Parameter in ParameterList:
+            print(Parameter + ' value: %f' % G_Best[ParameterList.index(Parameter)])
+
+    ## PSO step 6 - Output results
+    ParametersDictionary = {}
+    for ParameterNumber in range(Dimensions):
+        ParameterName = ParameterList[ParameterNumber]
+        ParameterValue = G_Best[ParameterNumber]
+        ParametersDictionary[ParameterName] = ParameterValue
+
+    return ParametersDictionary
 
 # Define PCNN class
 class PCNN:
@@ -307,6 +441,7 @@ class PCNN:
         """
 
         Tic = time.time()
+        print('\nCompute image histogram...')
 
         # Initialize PCNN
         MaxS = self.Image.max()
@@ -332,7 +467,7 @@ class PCNN:
 
         return H, Bins
 
-    def Segmentation(self,Beta=2,Delta=1,Vt=400):
+    def Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100):
 
         """
         Segment image using single neuron firing and fast linking implementation
@@ -349,17 +484,19 @@ class PCNN:
         """
 
         Tic = time.time()
+        print('\nImage segmentation...')
 
         # Initialize parameters
         S = NormalizeValues(self.Image)
         Rows, Columns = S.shape
+        F = np.zeros((Rows, Columns))
+        L = np.zeros((Rows, Columns))
         Y = np.zeros((Rows, Columns))
         T = np.zeros((Rows, Columns))
         W = np.array([[0.5, 1, 0.5],
                       [1, 0, 1],
                       [0.5, 1, 0.5]])
-        F = S
-        Theta = 255 * np.ones((Rows, Columns))
+        Theta = np.ones((Rows, Columns))
 
         FiredNumber = 0
         N = 0
@@ -368,10 +505,80 @@ class PCNN:
         while FiredNumber < S.size:
 
             N += 1
-            L = correlate(Y, W, output='float', mode='reflect')
-            Theta = Theta - Delta + Vt * Y
+            F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
+            L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+            Theta = Theta * np.exp(-AlphaT) + VT * Y
             Fire = 1
 
+            Nl = 0
+            while Fire == 1:
+
+                Q = Y
+                U = F * (1 + Beta * L)
+                Y = (U > Theta) * 1
+                if np.array_equal(Q, Y):
+                    Fire = 0
+                else:
+                    L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+
+                Nl += 1
+                if Nl > 1E4:
+                    print('Fast linking too long, stopped')
+                    break
+
+            T = T + N * Y
+            FiredNumber = FiredNumber + sum(sum(Y))
+
+        Output = 256 - T
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Output
+
+    def Simplified_Segmentation(self,Beta=2,Delta=1/255,VT=100):
+
+        """
+        Segment image using simplified PCNN, single neuron firing and fast linking implementation
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+        :param Delta: Linear decay factor for threshold level
+        :param VT: Dynamic threshold amplitude
+        :return: H: Image histogram in numpy array
+        """
+
+        Tic = time.time()
+        print('\nImage segmentation...')
+
+        # Initialize parameters
+        S = NormalizeValues(self.Image) + 0.05
+        Rows, Columns = S.shape
+        Y = np.zeros((Rows, Columns))
+        T = np.zeros((Rows, Columns))
+        W = np.array([[0.5, 1, 0.5],
+                      [1, 0, 1],
+                      [0.5, 1, 0.5]])
+        Theta = np.ones((Rows, Columns)) * S.max()
+
+        FiredNumber = 0
+        N = 0
+
+        # Perform segmentation
+        while FiredNumber < S.size:
+
+            N += 1
+            F = S
+            L = correlate(Y, W, output='float', mode='reflect')
+            Theta = Theta - Delta + VT * Y
+            Fire = 1
+
+            Nl = 0
             while Fire == 1:
 
                 Q = Y
@@ -382,10 +589,15 @@ class PCNN:
                 else:
                     L = correlate(Y, W, output='float', mode='reflect')
 
+                Nl += 1
+                if Nl > 1E4:
+                    print('Fast linking too long, stopped')
+                    break
+
             T = T + N * Y
             FiredNumber = FiredNumber + sum(sum(Y))
 
-        Output = 256 - T
+        Output = 1 - NormalizeValues(T)
 
         # Print time elapsed
         Toc = time.time()
@@ -408,6 +620,7 @@ class PCNN:
         """
 
         Tic = time.time()
+        print('\nCompute image time series...')
 
         # Initialization
         S = NormalizeValues(self.Image)
@@ -451,6 +664,7 @@ class PCNN:
         """
 
         Tic = time.time()
+        print('\nPerform image restoration...')
 
         # Initialization
         S = NormalizeValues(self.Image)
@@ -535,6 +749,7 @@ class PCNN:
         """
 
         Tic = time.time()
+        print('\nPerform image enhancement...')
 
         # Initialization
         S = NormalizeValues(self.Image) + 1/255
@@ -586,47 +801,73 @@ PlotArray(GS, 'Grayscale Image')
 # Use PCNN tool
 PCNN_Tools = PCNN()
 PCNN_Tools.Set_Image(GS)
+H1, Bins = PCNN_Tools.Histogram()
 Y = PCNN_Tools.Enhancement()
 Y_Stretched = GrayStretch(Y,0.90)
 PlotArray(Y_Stretched, 'Enhanced Image')
 
 
-H, Bins = PCNN_Tools.Histogram(NBins)
-Indices = np.where(H == 0)[0]
-Suite = np.concatenate([np.diff(Indices),np.array([0])])
-Low, High = np.array([0]), np.array([])
-i = 0
-while i < len(H):
-    n = 0
-    while H[i+n] == 0:
-        n += 1
-    if n > 2:
-        High = np.concatenate([High,np.array([i])]).astype('int')
-        Low = np.concatenate([Low,np.array([i+n-1])]).astype('int')
-        i += n
-    else:
-        i += 1
-High = np.concatenate([High,np.array([255])])
+PCNN_Tools.Set_Image(Y)
+H2, Bins = PCNN_Tools.Histogram()
+PCNN_Tools.Set_Image(Y_Stretched)
+H3, Bins = PCNN_Tools.Histogram()
 
-Seg = np.zeros(Y_Stretched.shape)
-for n in range(len(High)):
-    F1 = Y_Stretched > Bins[Low[n]]
-    F2 = Y_Stretched < Bins[High[n]]
-    Seg[F1*F2] = n
-Seg[Y_Stretched == Bins[High[n]]] = n + 1
-
-a = Seg.copy()
-b = np.unique(Seg)
-Layer = b[-1]
-a[a != Layer] = 0
-a[a == Layer] = 1
-PlotArray(a,'Seg')
-
+Figure, Axes = plt.subplots(1,1,figsize=(5.5,4.5))
+Axes.bar(x=np.arange(0,256), height=H3 / H3.sum(), width=1, color=(1,0,1),label='Stretched')
+Axes.bar(x=np.arange(0,256), height=H2 / H2.sum(), width=1, color=(1,0,0),label='Enhanced')
+Axes.bar(x=np.arange(0,256), height=H1 / H1.sum(), width=1, color=(0,0,1),label='Original')
+plt.legend(loc='best')
+plt.show()
+plt.close(Figure)
 
 
 PCNN_Tools.Set_Image(Y_Stretched)
-Y_Seg = PCNN_Tools.Segmentation()
-PlotArray(Y_Seg,'Segmented Image')
+Y_Seg = PCNN_Tools.Simplified_Segmentation()
+PlotArray(Y_Seg, 'Segmented Image')
+
+# Open manually segmented image
+SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test2_Seg.png')
+SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
+# SegmentedArray = SegmentedArray[3839:3839+1182,4724:4724+1182]
+
+CementLines = SegmentedArray[:,:,0].copy()
+Harvesian = SegmentedArray[:, :, 1].copy()
+Osteocytes = SegmentedArray[:,:,2].copy()
+Threshold = 200
+CementLines[CementLines < Threshold] = 0
+CementLines[CementLines >= Threshold] = 1
+Harvesian[Harvesian < Threshold] = 0
+Harvesian[Harvesian >= Threshold] = 1
+Osteocytes[Osteocytes < Threshold] = 0
+Osteocytes[Osteocytes >= Threshold] = 1
+
+F0 = SegmentedArray[:,:,0] > 180
+F1 = SegmentedArray[:,:,1] > 180
+F2 = SegmentedArray[:,:,2] > 180
+CementLines[F1] = 0
+CementLines[F2] = 0
+Harvesian[F0] = 0
+Harvesian[F2] = 0
+Osteocytes[F0] = 0
+Osteocytes[F1] = 0
+
+Segments = CementLines + Harvesian + Osteocytes
+PlotArray(CementLines,'Segments')
+
+OptimalParameters = PSO_Algorithm(Y_Stretched,CementLines)
+
+
+
+# V = C1 * np.random.uniform(-1, 1, (Ps, Dimensions)) * RangeAmplitudes \
+#     + C2 * np.random.uniform(-1, 1) * RangeAmplitudes
+
+
+for v in np.unique(Y_Seg):
+    a = Y_Seg.copy()
+    a[a != v] = 0
+    a[a == v] = 1
+    PlotArray(Y_Seg,'Segmented Image')
+
 
 
 
