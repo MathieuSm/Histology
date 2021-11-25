@@ -225,7 +225,7 @@ PlotArray(Input,'Input')
 Rows, Columns = Input.shape
 Size = Input.size
 
-J = random_noise(Input, mode='gaussian', seed=None, clip=True, mean=0, var=0.001)
+J = random_noise(Input, mode='gaussian', seed=None, clip=True, mean=0, var=0.01)
 J = NormalizeArray(J)
 PlotArray(J,'Noised')
 
@@ -243,7 +243,7 @@ Y = np.zeros(Input.shape)
 B = np.zeros(Input.shape)
 T = np.zeros(Input.shape)
 
-f = 0.03
+f = 0.3
 g = 0.99
 gamma = 1
 N = 0
