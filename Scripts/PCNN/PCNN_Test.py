@@ -16,16 +16,8 @@ desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
 plt.rc('font', size=12)
 
-def RGB2Gray(RGBImage):
-    """
-    This function convert color image to gray scale image
-    based on matplotlib linear approximation
-    """
 
-    R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
-    Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
 
-    return np.round(Gray).astype('uint8')
 def SaveImage(Image,Name):
 
     from skimage import io
@@ -176,6 +168,25 @@ def PlotArray(Array, Title, ColorBar=False):
     plt.close(Figure)
 
     return
+def RGB2Gray(RGBImage):
+    """
+    This function convert color image to gray scale image
+    based on matplotlib linear approximation
+    """
+
+    R, G, B = RGBImage[:,:,0], RGBImage[:,:,1], RGBImage[:,:,2]
+    Gray = 0.2989 * R + 0.5870 * G + 0.1140 * B
+
+    return np.round(Gray).astype('uint8')
+def RGB2YUV(RGBArray):
+
+    Conversion = np.array([[0.299, 0.587, 0.114],
+                           [-0.14713, -0.28886, 0.436],
+                           [0.615, -0.51499, -1.0001]])
+    YUV = np.dot(RGBArray, Conversion)
+    YUV[:, :, 1:] += 128.0
+
+    return np.round(YUV).astype('uint8')
 def PrintTime(Tic, Toc):
     """
     Print elapsed time in seconds to time in HH:MM:SS format
@@ -312,7 +323,7 @@ def PSO_Algorithm(GrayScaleImage,SegmentedImage):
         VT = ParametersDictionary['VT']
         Beta = ParametersDictionary['Beta']
 
-        Y = PCNN_Tools.Simplified_Segmentation(Beta, AlphaT, VT)
+        Y = PCNN_Tools.SPCNN_Segmentation(Beta, AlphaT, VT)
 
         # Compute dice similarity coefficient with manual segmentation
         Initial_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -359,7 +370,7 @@ def PSO_Algorithm(GrayScaleImage,SegmentedImage):
             VT = ParametersDictionary['VT']
             Beta = ParametersDictionary['Beta']
 
-            Y = PCNN_Tools.Simplified_Segmentation(Beta, AlphaT, VT)
+            Y = PCNN_Tools.SPCNN_Segmentation(Beta, AlphaT, VT)
 
             # Compute dice similarity coefficient with manual segmentation
             New_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -418,11 +429,25 @@ class PCNN:
     # Set PCNN attributes
     def Set_Image(self,Image):
         """
-        Define PCNN attributes
+        Define single image to be processed by PCNN
         :param Image: Grayscale intensity image in numpy array
         """
         self.Image = Image
         return
+
+    def Images2Fuse(self,Image1,Image2,Image3=None):
+        """
+        Define image set to be processed by mPCNN
+        :param Image1: Grayscale intensity image in numpy array
+        :param Image2: Grayscale intensity image in numpy array
+        :param Image3: Grayscale intensity image in numpy array
+        """
+        self.Image1 = Image1
+        self.Image2 = Image2
+        if Image3:
+            self.Image3 = Image3
+        return
+
 
 
     # Define PCNN functions
@@ -467,7 +492,7 @@ class PCNN:
 
         return H, Bins
 
-    def Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100):
+    def PCNN_Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100):
 
         """
         Segment image using single neuron firing and fast linking implementation
@@ -537,7 +562,7 @@ class PCNN:
 
         return Output
 
-    def Simplified_Segmentation(self,Beta=2,Delta=1/255,VT=100):
+    def SPCNN_Segmentation(self,Beta=2,Delta=1/255,VT=100):
 
         """
         Segment image using simplified PCNN, single neuron firing and fast linking implementation
@@ -557,7 +582,7 @@ class PCNN:
         print('\nImage segmentation...')
 
         # Initialize parameters
-        S = NormalizeValues(self.Image) + 0.05
+        S = NormalizeValues(self.Image)
         Rows, Columns = S.shape
         Y = np.zeros((Rows, Columns))
         T = np.zeros((Rows, Columns))
@@ -598,6 +623,51 @@ class PCNN:
             FiredNumber = FiredNumber + sum(sum(Y))
 
         Output = 1 - NormalizeValues(T)
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Output
+
+    def Watershed_Segmentation(self,Peaks,Minima):
+
+        """
+        Segment image histogram watershed to compute Beta
+        Based on:
+        Min Li and Wei Cai and Xiao-Yan Li (2006)
+        An Adaptive Image Segmentation Method Based on a Modified Pulse Coupled Neural Network
+        LNCS (4221), 471-474
+
+        :param Peaks: Histogram peaks, Peaks index < Minima index
+        :param Minima: Histogram local minima, Minima index > Peaks index
+        :return: Output: Segmented image as numpy array
+        """
+
+        Tic = time.time()
+        print('\nImage segmentation...')
+
+        # Initialize parameters
+        S = NormalizeValues(self.Image)
+        Y = np.zeros(S.shape)
+        T = np.zeros(S.shape)
+        W = GaussianKernel(3, 1)
+
+        ## Feeding and linkin inputs
+        F = S
+        L = Y
+
+        # Loop
+        N = 0
+        for m in range(len(Minima)):
+            N += 1
+            L = correlate(Y, W, output='float', mode='reflect')
+            Beta = Minima[m] / Peaks[m] - 1
+            U = F * (1 + Beta * L)
+            Y = (U > Minima[m]) * 1
+            T += N * Y
+
+        Output = NormalizeValues(T)
 
         # Print time elapsed
         Toc = time.time()
@@ -786,6 +856,73 @@ class PCNN:
 
         return T_inv
 
+    def Fusion(self,Beta1,Beta2,Beta3=0,dT=1/255,Sigma=1/255):
+
+        """
+        Perform image fusion using multi-channel PCNN
+        Based on:
+        Wang, Z., Ma, Y. (2008)
+        Medical image fusion using m-PCNN
+        Information Fusion, 9(2), 176–185
+        https://doi.org/10.1016/j.inffus.2007.04.003
+
+        :param: Beta1: Image 1 weight coefficient
+        :param: Beta2: Image 2 weight coefficient
+        :param: Beta3: Image 3 weight coefficient
+        :param: dT: Linear threshold decay
+        :param: Sigma: Fix neuron internal activity shift
+        :return: T: Fused Image
+        """
+
+        Tic = time.time()
+        print('\nPerform image fusion...')
+
+        # Initialization
+        S1 = NormalizeValues(self.Image1)
+        S2 = NormalizeValues(self.Image2)
+        if Beta3:
+            S3 = NormalizeValues(self.Image3)
+        else:
+            S3 = np.zeros(S1.shape)
+
+        W = np.array([[0.7, 1, 0.7], [1, 0, 1], [0.7, 1, 0.7]])
+
+        BetaWeights = np.array([Beta1, Beta2, Beta3])
+        Beta1, Beta2, Beta3 = BetaWeights / BetaWeights.sum()
+
+        Y = np.zeros(S1.shape)
+        T = np.zeros(S1.shape)
+        Theta = np.ones(S1.shape)
+
+        Vt = 100
+        FireNumber = 0
+        N = 0
+        while FireNumber < S1.size:
+            N += 1
+
+            H1 = correlate(Y, W, output='float', mode='reflect') + S1
+            H2 = correlate(Y, W, output='float', mode='reflect') + S2
+            H3 = correlate(Y, W, output='float', mode='reflect') + S3
+
+            U = (1 + Beta1 * H1) * (1 + Beta2 * H2) * (1 + Beta3 * H3) + Sigma
+            U = U / U.max()
+
+            Theta = Theta - dT + Vt * Y
+
+            Y = (U > Theta) * 1
+
+            T += N * Y
+
+            FireNumber += sum(sum(Y))
+
+        T = 1 - NormalizeValues(T)
+
+        # Print time elapsed
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return T
+
 
 # Set path
 CurrentDirectory = os.getcwd()
@@ -794,17 +931,36 @@ ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
 # Open image to segment
 Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
 Array = sitk.GetArrayFromImage(Image)
-PlotArray(Array[:,:,2], 'RGB Image')
+PlotArray(Array, 'RGB Image')
 GS = RGB2Gray(Array)
+F_Array = Array.astype('float')
+GS = F_Array[:,:,0] * F_Array[:,:,1] * F_Array[:,:,2]
 PlotArray(GS, 'Grayscale Image')
+
+YUV = RGB2YUV(Array)
+U = YUV[:,:,1]
+Y = YUV[:,:,0]
+V = YUV[:,:,2]
+PlotArray(Y, 'Y')
+
+
+PCNN_Tools.Images2Fuse(U,Y)
+Y = PCNN_Tools.Fusion(Beta1=1/1,Beta2=1/2)
+PlotArray(Y, 'Enhanced Image')
+
 
 # Use PCNN tool
 PCNN_Tools = PCNN()
-PCNN_Tools.Set_Image(GS)
+PCNN_Tools.Set_Image(U)
 H1, Bins = PCNN_Tools.Histogram()
 Y = PCNN_Tools.Enhancement()
-Y_Stretched = GrayStretch(Y,0.90)
+Y_Stretched = GrayStretch(Y,0.9)
 PlotArray(Y_Stretched, 'Enhanced Image')
+
+
+PCNN_Tools.Set_Image(U)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation()
+PlotArray(Y_Seg,'Segmented Image')
 
 
 PCNN_Tools.Set_Image(Y)
@@ -820,10 +976,18 @@ plt.legend(loc='best')
 plt.show()
 plt.close(Figure)
 
+Peaks = np.where(H3 != 0)[0]
+Minima = Peaks[:-1] + np.round(np.diff(Peaks) / 2).astype('int')
 
 PCNN_Tools.Set_Image(Y_Stretched)
-Y_Seg = PCNN_Tools.Simplified_Segmentation()
+Y_Seg = PCNN_Tools.Watershed_Segmentation(Bins[Peaks],Bins[Minima])
 PlotArray(Y_Seg, 'Segmented Image')
+
+for b in np.unique(Y_Seg):
+    a = Y_Seg.copy()
+    a[a != b] = 0
+    a[a == b] = 1
+    PlotArray(a,'Single gray level')
 
 # Open manually segmented image
 SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test2_Seg.png')
@@ -939,14 +1103,14 @@ PlotArray(Array, 'RGB Image')
 R, G, B = Array[:,:,0], Array[:,:,1], Array[:,:,2]
 
 Figure, Axes = plt.subplots(1, 3)
-Axes[0].imshow(R, cmap='gray')
-Axes[0].set_title('R channel')
+Axes[0].imshow(Y, cmap='gray')
+Axes[0].set_title('Y channel')
 Axes[0].axis('off')
-Axes[1].imshow(G, cmap='gray')
-Axes[1].set_title('G channel')
+Axes[1].imshow(U, cmap='gray')
+Axes[1].set_title('U channel')
 Axes[1].axis('off')
-Axes[2].imshow(B, cmap='gray')
-Axes[2].set_title('B channel')
+Axes[2].imshow(V, cmap='gray')
+Axes[2].set_title('V channel')
 Axes[2].axis('off')
 plt.tight_layout()
 plt.show()
