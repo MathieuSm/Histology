@@ -234,6 +234,27 @@ def RGB2HSV(RGBArray):
     HSV[:, :, 2] = V
 
     return HSV
+def PlotChanels(MChanelsArray, ChanelA, ChanelB, ChanelC):
+
+    A = MChanelsArray[:, :, 0]
+    B = MChanelsArray[:, :, 1]
+    C = MChanelsArray[:, :, 2]
+
+    Figure, Axes = plt.subplots(1, 3)
+    Axes[0].imshow(A, cmap='gray')
+    Axes[0].set_title(ChanelA + ' Channel')
+    Axes[0].axis('off')
+    Axes[1].imshow(B, cmap='gray')
+    Axes[1].set_title(ChanelB + ' Channel')
+    Axes[1].axis('off')
+    Axes[2].imshow(C, cmap='gray')
+    Axes[2].set_title(ChanelC + ' Channel')
+    Axes[2].axis('off')
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
 def PrintTime(Tic, Toc):
     """
     Print elapsed time in seconds to time in HH:MM:SS format
@@ -315,6 +336,43 @@ def BoundFinding(H_Per, Per):
         N += 1
 
     return N
+def GetSegments(SegmentedArray):
+    CementLines = SegmentedArray[:, :, 0].copy()
+    Harvesian = SegmentedArray[:, :, 1].copy()
+    Osteocytes = SegmentedArray[:, :, 2].copy()
+    Threshold = 200
+    CementLines[CementLines < Threshold] = 0
+    CementLines[CementLines >= Threshold] = 1
+    Harvesian[Harvesian < Threshold] = 0
+    Harvesian[Harvesian >= Threshold] = 1
+    Osteocytes[Osteocytes < Threshold] = 0
+    Osteocytes[Osteocytes >= Threshold] = 1
+
+    F0 = SegmentedArray[:, :, 0] > 180
+    F1 = SegmentedArray[:, :, 1] > 180
+    F2 = SegmentedArray[:, :, 2] > 180
+    CementLines[F1] = 0
+    CementLines[F2] = 0
+    Harvesian[F0] = 0
+    Harvesian[F2] = 0
+    Osteocytes[F0] = 0
+    Osteocytes[F1] = 0
+
+    Segments = CementLines + Harvesian + Osteocytes
+
+    return Segments
+def PlotSegment(SegmentedImage, SegmentNumber):
+
+    SegmentValues = np.unique(SegmentedImage)
+    Segment = SegmentValues[SegmentNumber]
+    Filter = SegmentedImage != Segment
+
+    PlottedArray = SegmentedImage.copy()
+    PlottedArray[Filter] = -1
+    PlottedArray[PlottedArray >= 0] = 0
+    PlotArray(PlottedArray, 'Segment Number ' + str(SegmentNumber))
+
+    return PlottedArray + 1
 def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20):
 
     # Particle Swarm Optimization (PSO) algorithm
@@ -611,7 +669,7 @@ class PCNN:
 
 
     # Define PCNN functions
-    def Histogram(self,NBins=256):
+    def Histogram(self,NBins=256,Plot=False):
 
         """
         Compute image histogram
@@ -650,9 +708,18 @@ class PCNN:
 
         Bins = np.arange(0,MaxS+Delta,Delta*MaxS)
 
+        if Plot:
+            Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
+            Axes.bar(x=Bins, height=H / H.sum(), width=Bins.max()/len(Bins), color=(1, 0, 0))
+            Axes.set_xlabel('Values (-)')
+            Axes.set_ylabel('Density (-)')
+            plt.subplots_adjust(left=0.175)
+            plt.show()
+            plt.close(Figure)
+
         return H, Bins
 
-    def PCNN_Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100):
+    def PCNN_Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100,FastLinking=False,Nl_max=1E4):
 
         """
         Segment image using single neuron firing and fast linking implementation
@@ -693,23 +760,27 @@ class PCNN:
             F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
             L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
             Theta = Theta * np.exp(-AlphaT) + VT * Y
-            Fire = 1
 
-            Nl = 0
-            while Fire == 1:
+            if FastLinking:
+                Fire = 1
+                Nl = 0
+                while Fire == 1:
 
-                Q = Y
+                    Q = Y
+                    U = F * (1 + Beta * L)
+                    Y = (U > Theta) * 1
+                    if np.array_equal(Q, Y):
+                        Fire = 0
+                    else:
+                        L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+
+                    Nl += 1
+                    if Nl > Nl_max:
+                        print('Fast linking too long, stopped')
+                        break
+            else:
                 U = F * (1 + Beta * L)
                 Y = (U > Theta) * 1
-                if np.array_equal(Q, Y):
-                    Fire = 0
-                else:
-                    L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
-
-                Nl += 1
-                if Nl > 1E4:
-                    print('Fast linking too long, stopped')
-                    break
 
             T = T + N * Y
             FiredNumber = FiredNumber + sum(sum(Y))
@@ -722,7 +793,7 @@ class PCNN:
 
         return Output
 
-    def SPCNN_Segmentation(self,Beta=2,Delta=1/255,VT=100,Nl_max=1E4):
+    def SPCNN_Segmentation(self,Beta=2,Delta=1/255,VT=100,FastLinking=False,Nl_max=1E4):
 
         """
         Segment image using simplified PCNN, single neuron firing and fast linking implementation
@@ -744,13 +815,12 @@ class PCNN:
 
         # Initialize parameters
         S = NormalizeValues(self.Image)
-        Rows, Columns = S.shape
-        Y = np.zeros((Rows, Columns))
-        T = np.zeros((Rows, Columns))
+        Y = np.zeros(S.shape)
+        T = np.zeros(S.shape)
         W = np.array([[0.5, 1, 0.5],
                       [1, 0, 1],
                       [0.5, 1, 0.5]])
-        Theta = np.ones((Rows, Columns)) * S.max()
+        Theta = np.ones(S.shape)
 
         FiredNumber = 0
         N = 0
@@ -762,23 +832,27 @@ class PCNN:
             F = S
             L = correlate(Y, W, output='float', mode='reflect')
             Theta = Theta - Delta + VT * Y
-            Fire = 1
 
-            Nl = 0
-            while Fire == 1:
+            if FastLinking:
+                Fire = 1
+                Nl = 0
+                while Fire == 1:
 
-                Q = Y
+                    Q = Y
+                    U = F * (1 + Beta * L)
+                    Y = (U > Theta) * 1
+                    if np.array_equal(Q, Y):
+                        Fire = 0
+                    else:
+                        L = correlate(Y, W, output='float', mode='reflect')
+
+                    Nl += 1
+                    if Nl > Nl_max:
+                        print('Fast linking too long, stopped')
+                        break
+            else:
                 U = F * (1 + Beta * L)
                 Y = (U > Theta) * 1
-                if np.array_equal(Q, Y):
-                    Fire = 0
-                else:
-                    L = correlate(Y, W, output='float', mode='reflect')
-
-                Nl += 1
-                if Nl > Nl_max:
-                    print('Fast linking too long, stopped')
-                    break
 
             T = T + N * Y
             FiredNumber = FiredNumber + sum(sum(Y))
@@ -1206,24 +1280,97 @@ CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
 
 # Open image to segment
-Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test.jpg')
+Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
 Array = sitk.GetArrayFromImage(Image)
 PlotArray(Array, 'RGB Image')
+PlotChanels(Array, 'R', 'G', 'B')
+YUV = RGB2YUV(Array)
+PlotChanels(YUV, 'Y', 'U', 'V')
+HSV = RGB2HSV(Array)
+PlotChanels(HSV, 'H', 'S', 'V')
+
 GS = RGB2Gray(Array)
-F_Array = Array.astype('float')
-GS = F_Array[:,:,0] * F_Array[:,:,1] * F_Array[:,:,2]
 PlotArray(GS, 'Grayscale Image')
 
-YUV = RGB2YUV(Array)
-U = YUV[:,:,1]
-Y = YUV[:,:,0]
-V = YUV[:,:,2]
-PlotArray(Y, 'Y')
+# Use PCNN tool
+PCNN_Tools = PCNN()
 
-HSV = RGB2HSV(Array)
-S = HSV[:,:,1]
-H = HSV[:,:,0]
-V = HSV[:,:,2]
+# Find Harvesian canals
+PCNN_Tools.Set_Image(1-HSV[:,:,1])
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/10)
+PlotArray(Y_Seg,'Segmented')
+
+Segment = PlotSegment(Y_Seg,10)
+
+Disk = morphology.disk(15)
+Segments = morphology.binary_dilation(Segment,Disk)
+PlotArray(Segments,'Segmented Image')
+
+# Find cement lines
+PCNN_Tools.Set_Image(GS)
+Y = PCNN_Tools.Enhancement()
+Y_Stretched = GrayStretch(Y,0.95)
+PlotArray(1-Y_Stretched, 'Enhanced Image')
+PCNN_Tools.Set_Image(Y_Stretched)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
+PlotArray(Y_Seg,'Segmented Image')
+
+# Compute distances from Harvesian canals
+MedialAxis, Distances = morphology.medial_axis(1-Segments, return_distance=True)
+Stretched_Distances = GrayStretch(Distances,0.2)
+PlotArray(Stretched_Distances, 'Distances')
+
+Combine = Y_Seg * Stretched_Distances / Stretched_Distances.max()
+PlotArray(Combine,'Combined')
+
+
+## Segment combined array, label it and try watershed
+
+PCNN_Tools.Set_Image(Y_Seg)
+H, Bins = PCNN_Tools.Histogram(Plot=True)
+
+segmentation.watershed()
+
+
+Disk = morphology.disk(4)
+Segments = morphology.binary_erosion(Segment,Disk)
+PlotArray(Segments,'Segmented Image')
+
+
+
+G = GaussianKernel(5,2)
+Gauss = correlate(HSV[:,:,1],G)
+PlotArray(Gauss, 'Gauss Image')
+
+W = np.array([[1,1,1],[1,1,1],[1,1,1]])
+Gradient = filters.rank.gradient(np.round(HSV[:,:,1]*255).astype('uint8'), W)
+PlotArray(Gradient, 'Gradient Image')
+
+
+Threshold = Gradient.max() * 0.4
+Gradient[Gradient < Threshold] = 0
+Gradient[Gradient >= Threshold] = 1
+PlotArray(Gradient, 'Gradient Image')
+
+
+
+
+PCNN_Tools.Set_Image(Gradient)
+Test = PCNN_Tools.SPCNN_Filtering(Beta=0.289,Delta=0.1,VT=0.9)
+PlotArray(Test,'Filtered')
+
+# Open manually segmented image
+SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test_Seg.png')
+SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
+Segments = GetSegments(SegmentedArray)
+PlotArray(Segments,'Segments')
+
+# Compute optimal parameters
+OptimalParameters = PSO_SPCNN(Y_Stretched,CementLines)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
+PlotArray(Y_Seg,'Segmented Image')
+
+
 
 PCNN_Tools.Images2Fuse(U,1-S)
 Y = PCNN_Tools.Fusion(Beta1=1/2,Beta2=1/2)
@@ -1231,14 +1378,7 @@ S2 = S**2
 PlotArray(S2, 'Fused Image')
 
 
-# Use PCNN tool
-PCNN_Tools = PCNN()
-PCNN_Tools.Set_Image(GS)
-Y = PCNN_Tools.Restoration()
-H1, Bins = PCNN_Tools.Histogram()
-Y = PCNN_Tools.Enhancement()
-Y_Stretched = GrayStretch(Y,0.95)
-PlotArray(Y_Stretched, 'Restored Image')
+
 
 PCNN_Tools.Set_Image(Y_Stretched)
 Y_Seg = PCNN_Tools.SPCNN_Segmentation()
@@ -1271,40 +1411,8 @@ for b in np.unique(Y_Seg):
     a[a == b] = 1
     PlotArray(a,'Single gray level')
 
-# Open manually segmented image
-SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test_Seg.png')
-SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
-# SegmentedArray = SegmentedArray[3839:3839+1182,4724:4724+1182]
 
-CementLines = SegmentedArray[:,:,0].copy()
-Harvesian = SegmentedArray[:, :, 1].copy()
-Osteocytes = SegmentedArray[:,:,2].copy()
-Threshold = 200
-CementLines[CementLines < Threshold] = 0
-CementLines[CementLines >= Threshold] = 1
-Harvesian[Harvesian < Threshold] = 0
-Harvesian[Harvesian >= Threshold] = 1
-Osteocytes[Osteocytes < Threshold] = 0
-Osteocytes[Osteocytes >= Threshold] = 1
 
-F0 = SegmentedArray[:,:,0] > 180
-F1 = SegmentedArray[:,:,1] > 180
-F2 = SegmentedArray[:,:,2] > 180
-CementLines[F1] = 0
-CementLines[F2] = 0
-Harvesian[F0] = 0
-Harvesian[F2] = 0
-Osteocytes[F0] = 0
-Osteocytes[F1] = 0
-
-Segments = CementLines + Harvesian + Osteocytes
-PlotArray(Segments,'Segments')
-
-OptimalParameters = PSO_SPCNN(Y_Stretched,CementLines)
-
-PCNN_Tools.Set_Image(Y_Stretched)
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
-PlotArray(Y_Seg,'Segmented Image')
 
 PCNN_Tools.Set_Image(Y_Seg)
 Y = PCNN_Tools.SPCNN_Filtering()
@@ -1328,12 +1436,6 @@ Y_Thresh = np.zeros(Y_Stretched.shape)
 Y_Thresh[Y_Stretched == Threshold] = 1
 PlotArray(Y_Thresh,'Thresholded Image')
 
-Disk = morphology.disk(5)
-Segments = morphology.binary_erosion(Y_Seg,Disk)
-PlotArray(Segments,'Segmented Image')
-
-Disk = morphology.disk(4)
-Segments = morphology.binary_dilation(Y_Seg,Disk)
 
 Figure, Axes = plt.subplots(1,1,figsize=(5.5,4.5))
 Axes.imshow(Y_Stretched,cmap='gray')
@@ -1350,32 +1452,6 @@ plt.close(Figure)
 
 
 
-# Open manually segmented image
-SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test2_Seg.png')
-SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
-# SegmentedArray = SegmentedArray[3839:3839+1182,4724:4724+1182]
-
-CementLines = SegmentedArray[:,:,0].copy()
-Harvesian = SegmentedArray[:, :, 1].copy()
-Osteocytes = SegmentedArray[:,:,2].copy()
-Threshold = 200
-CementLines[CementLines < Threshold] = 0
-CementLines[CementLines >= Threshold] = 1
-Harvesian[Harvesian < Threshold] = 0
-Harvesian[Harvesian >= Threshold] = 1
-Osteocytes[Osteocytes < Threshold] = 0
-Osteocytes[Osteocytes >= Threshold] = 1
-
-F0 = SegmentedArray[:,:,0] > 180
-F1 = SegmentedArray[:,:,1] > 180
-F2 = SegmentedArray[:,:,2] > 180
-CementLines[F1] = 0
-CementLines[F2] = 0
-Harvesian[F0] = 0
-Harvesian[F2] = 0
-Osteocytes[F0] = 0
-Osteocytes[F1] = 0
-
 Segments = CementLines + Harvesian + Osteocytes
 Disk = morphology.disk(2)
 Segments = morphology.binary_erosion(Harvesian,Disk)
@@ -1387,23 +1463,6 @@ PlotArray(Segments, 'Manual Segmentation')
 Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
 Array = sitk.GetArrayFromImage(Image)
 PlotArray(Array, 'RGB Image')
-
-# Decompose RGB image and equalize histogram
-R, G, B = Array[:,:,0], Array[:,:,1], Array[:,:,2]
-
-Figure, Axes = plt.subplots(1, 3)
-Axes[0].imshow(H, cmap='gray')
-Axes[0].set_title('H channel')
-Axes[0].axis('off')
-Axes[1].imshow(S, cmap='gray')
-Axes[1].set_title('S channel')
-Axes[1].axis('off')
-Axes[2].imshow(V, cmap='gray')
-Axes[2].set_title('V channel')
-Axes[2].axis('off')
-plt.tight_layout()
-plt.show()
-plt.close(Figure)
 
 # Match histograms for better phase difference and clarity and rescale
 GS = exposure.match_histograms(R, B)
