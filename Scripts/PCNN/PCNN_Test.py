@@ -373,7 +373,27 @@ def PlotSegment(SegmentedImage, SegmentNumber):
     PlotArray(PlottedArray, 'Segment Number ' + str(SegmentNumber))
 
     return PlottedArray + 1
-def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20):
+def BetweenClassVariance(GrayScale, Segmented):
+
+    Ignited_Neurons = Segmented == 1
+
+    N0 = np.sum(~Ignited_Neurons)
+    N1 = np.sum(Ignited_Neurons)
+
+    if N0 == 0 or N1 == 0:
+        Vb = 0
+
+    else:
+        w0 = N0 / Segmented.size
+        w1 = N1 / Segmented.size
+
+        u0 = GrayScale[~Ignited_Neurons].mean()
+        u1 = GrayScale[Ignited_Neurons].mean()
+
+        Vb = w0 * w1 * (u0 - u1) ** 2
+
+    return Vb
+def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20,AT=False,FastLinking=False):
 
     # Particle Swarm Optimization (PSO) algorithm
     t = 0  # Iteration number
@@ -414,7 +434,7 @@ def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20):
         VT = ParametersDictionary['VT']
         Beta = ParametersDictionary['Beta']
 
-        Y = PCNN_Tools.SPCNN_Segmentation(Beta, Delta, VT)
+        Y = PCNN_Tools.SPCNN_Segmentation(Beta, Delta, VT, AT, FastLinking)
 
         # Compute dice similarity coefficient with manual segmentation
         Initial_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -457,7 +477,7 @@ def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20):
             VT = ParametersDictionary['VT']
             Beta = ParametersDictionary['Beta']
 
-            Y = PCNN_Tools.SPCNN_Segmentation(Beta, Delta, VT)
+            Y = PCNN_Tools.SPCNN_Segmentation(Beta, Delta, VT, AT, FastLinking)
 
             # Compute dice similarity coefficient with manual segmentation
             New_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -488,7 +508,7 @@ def PSO_SPCNN(GrayScaleImage,SegmentedImage,Ps=20):
         ParametersDictionary[ParameterName] = ParameterValue
 
     return ParametersDictionary
-def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20):
+def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20,AT=False,FastLinking=False):
 
     # Particle Swarm Optimization (PSO) algorithm
     t = 0  # Iteration number
@@ -540,7 +560,7 @@ def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20):
         VT = ParametersDictionary['VT']
         Beta = ParametersDictionary['Beta']
 
-        Y = PCNN_Tools.PCNN_Segmentation(Beta,AlphaF,VF,AlphaL,VL,AlphaT,VT)
+        Y = PCNN_Tools.PCNN_Segmentation(Beta,AlphaF,VF,AlphaL,VL,AlphaT,VT,AT,FastLinking)
 
         # Compute dice similarity coefficient with manual segmentation
         Initial_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -587,7 +607,7 @@ def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20):
             VT = ParametersDictionary['VT']
             Beta = ParametersDictionary['Beta']
 
-            Y = PCNN_Tools.PCNN_Segmentation(Beta, AlphaF, VF, AlphaL, VL, AlphaT, VT)
+            Y = PCNN_Tools.PCNN_Segmentation(Beta,AlphaF,VF,AlphaL,VL,AlphaT,VT,AT,FastLinking)
 
             # Compute dice similarity coefficient with manual segmentation
             New_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedImage)
@@ -618,6 +638,70 @@ def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20):
         ParametersDictionary[ParameterName] = ParameterValue
 
     return ParametersDictionary
+def WatershedFlood(Image, Labels, Vmax):
+    """
+    Insipired from master thesis of Josephson
+    Does not work, for the moment
+    """
+
+    # Number of initial labels
+    N = len(np.unique(Labels))
+
+    # Initialize priority queue
+    Keys = np.arange(256).astype('int')
+    Q = {Key: None for Key in Keys}
+
+    # Transform image in 8bits integer image
+    Image = np.round(NormalizeValues(Image) * 255).astype('uint8')
+
+    for i in range(N):
+        Y, X = np.where(Labels == i + 1)
+
+        for j in range(len(X)):
+            Key = Image[Y[j], X[j]]
+            Values = [Y[j], X[j]]
+
+            if Q[Key]:
+                Q[Key] = [Q[Key][0], Values]
+            else:
+                Q[Key] = [Values]
+
+    EmptyQ = False
+
+    while not EmptyQ:
+
+        for i in range(256):
+
+            if not Q[i]:
+                EmptyQ = True
+                continue
+
+            EmptyQ = False
+
+            for j in range(len(Q[i])):
+                Y, X = Q[i].pop(0)
+                cX = [X - 1, X, X + 1]
+                cY = [Y - 1, Y, Y + 1]
+                Marker = Labels[Y, X]
+
+                for x in cX:
+                    for y in cY:
+
+                        C1 = x == X
+                        C2 = y == Y
+                        C3 = Labels[y, x] > 0
+                        C4 = Image[y, x] > Vmax
+
+                        if not (C1 * C2 + C3 + C4):
+                            Labels[y, x] = Marker
+                            Key = Image[y, x]
+                            Q[Key] = [Q[Key][0], [y, x]]
+
+                break
+
+            break
+
+    return Labels
 
 
 # Define PCNN class
@@ -719,7 +803,7 @@ class PCNN:
 
         return H, Bins
 
-    def PCNN_Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100,FastLinking=False,Nl_max=1E4):
+    def PCNN_Segmentation(self,Beta=2,AlphaF=1.,VF=0.5,AlphaL=1.,VL=0.5,AlphaT=0.05,VT=100,AT=False,FastLinking=False,Nl_max=1E4):
 
         """
         Segment image using single neuron firing and fast linking implementation
@@ -750,11 +834,18 @@ class PCNN:
                       [0.5, 1, 0.5]])
         Theta = np.ones((Rows, Columns))
 
+
         FiredNumber = 0
         N = 0
 
+        if AT:
+            Vb, New_Vb = 0, 0
+            Condition = New_Vb >= Vb
+        else:
+            Condition = FiredNumber < S.size
+
         # Perform segmentation
-        while FiredNumber < S.size:
+        while Condition:
 
             N += 1
             F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
@@ -782,10 +873,24 @@ class PCNN:
                 U = F * (1 + Beta * L)
                 Y = (U > Theta) * 1
 
-            T = T + N * Y
-            FiredNumber = FiredNumber + sum(sum(Y))
+            if AT:
+                # Update variance
+                Vb = New_Vb
+                New_Vb = BetweenClassVariance(S, Y)
+                Condition = New_Vb >= Vb
 
-        Output = 256 - T
+                if New_Vb >= Vb:
+                    Best_Y = Y
+
+            else:
+                T = T + N * Y
+                FiredNumber = FiredNumber + sum(sum(Y))
+                Condition = FiredNumber < S.size
+
+        if AT:
+            Output = Best_Y
+        else:
+            Output = 1 - NormalizeValues(T)
 
         # Print time elapsed
         Toc = time.time()
@@ -793,7 +898,7 @@ class PCNN:
 
         return Output
 
-    def SPCNN_Segmentation(self,Beta=2,Delta=1/255,VT=100,FastLinking=False,Nl_max=1E4):
+    def SPCNN_Segmentation(self,Beta=2,Delta=1/255,VT=100,AT=False,FastLinking=False,Nl_max=1E4):
 
         """
         Segment image using simplified PCNN, single neuron firing and fast linking implementation
@@ -825,8 +930,14 @@ class PCNN:
         FiredNumber = 0
         N = 0
 
+        if AT:
+            Vb, New_Vb = 0, 0
+            Condition = New_Vb >= Vb
+        else:
+            Condition = FiredNumber < S.size
+
         # Perform segmentation
-        while FiredNumber < S.size:
+        while Condition:
 
             N += 1
             F = S
@@ -854,10 +965,24 @@ class PCNN:
                 U = F * (1 + Beta * L)
                 Y = (U > Theta) * 1
 
-            T = T + N * Y
-            FiredNumber = FiredNumber + sum(sum(Y))
+            if AT:
+                # Update variance
+                Vb = New_Vb
+                New_Vb = BetweenClassVariance(S, Y)
+                Condition = New_Vb >= Vb
 
-        Output = 1 - NormalizeValues(T)
+                if New_Vb >= Vb:
+                    Best_Y = Y
+
+            else:
+                T = T + N * Y
+                FiredNumber = FiredNumber + sum(sum(Y))
+                Condition = FiredNumber < S.size
+
+        if AT:
+            Output = Best_Y
+        else:
+            Output = 1 - NormalizeValues(T)
 
         # Print time elapsed
         Toc = time.time()
@@ -1296,21 +1421,22 @@ PlotArray(GS, 'Grayscale Image')
 PCNN_Tools = PCNN()
 
 # Find Harvesian canals
-PCNN_Tools.Set_Image(1-HSV[:,:,1])
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/10)
+PCNN_Tools.Set_Image(HSV[:,:,1])
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/3)
 PlotArray(Y_Seg,'Segmented')
 
-Segment = PlotSegment(Y_Seg,10)
+Segment = PlotSegment(Y_Seg,3)
 
 Disk = morphology.disk(15)
 Segments = morphology.binary_dilation(Segment,Disk)
 PlotArray(Segments,'Segmented Image')
+Markers = measure.label(Segments)
 
 # Find cement lines
-PCNN_Tools.Set_Image(GS)
+PCNN_Tools.Set_Image(1-HSV[:,:,1])
 Y = PCNN_Tools.Enhancement()
 Y_Stretched = GrayStretch(Y,0.95)
-PlotArray(1-Y_Stretched, 'Enhanced Image')
+PlotArray(Y_Stretched, 'Enhanced Image')
 PCNN_Tools.Set_Image(Y_Stretched)
 Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
 PlotArray(Y_Seg,'Segmented Image')
@@ -1323,13 +1449,34 @@ PlotArray(Stretched_Distances, 'Distances')
 Combine = Y_Seg * Stretched_Distances / Stretched_Distances.max()
 PlotArray(Combine,'Combined')
 
+Otsu = filters.threshold_otsu(Combine)
+Limits = Combine.copy()
+Limits[Combine < Otsu] = 0
+Limits[Combine >= Otsu] = 1
+PlotArray(Limits,'Limits')
+
+Gradient = np.round(HSV[:,:,1] * 255).astype('uint8')
+Gradient = filters.rank.gradient(Gradient, morphology.disk(1))
+Gradient = NormalizeValues(Gradient)
+PlotArray(Gradient,'Gradient')
+
+Edges = feature.canny(Gradient, sigma=1) * 1
+PlotArray(Edges,'Edges')
+
+
+
+Combine = (1-Y_Stretched) * Distances / Distances.max() + Limits + Gradient
+PlotArray(Combine,'Combined')
+
+W_Seg = segmentation.watershed(Combine,Markers,connectivity=1)
+PlotArray(W_Seg,'Watershed segmentation')
+
 
 ## Segment combined array, label it and try watershed
 
 PCNN_Tools.Set_Image(Y_Seg)
 H, Bins = PCNN_Tools.Histogram(Plot=True)
 
-segmentation.watershed()
 
 
 Disk = morphology.disk(4)
@@ -1363,11 +1510,27 @@ PlotArray(Test,'Filtered')
 SegmentedImage = sitk.ReadImage(ImageDirectory + 'PCNN_Test_Seg.png')
 SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)
 Segments = GetSegments(SegmentedArray)
-PlotArray(Segments,'Segments')
+PlotArray(Segments[:,:-5],'Segments')
 
 # Compute optimal parameters
-OptimalParameters = PSO_SPCNN(Y_Stretched,CementLines)
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
+PlotArray(Y_Stretched[:-4,8:],'Cropped')
+OptimalParameters = PSO_PCNN(Y_Stretched[:-4,8:],Segments[:,:-5],AT=True,FastLinking=True)
+Beta = OptimalParameters['Beta']
+AlphaT = OptimalParameters['AlphaT']
+VT = OptimalParameters['VT']
+AlphaL = OptimalParameters['AlphaL']
+VL = OptimalParameters['VL']
+AlphaF = OptimalParameters['AlphaF']
+VF = OptimalParameters['VF']
+
+
+Y_Seg = PCNN_Tools.PCNN_Segmentation(Beta=Beta,AlphaT=AlphaT,VT=VT,
+                                     AlphaL=AlphaL,VL=VL,
+                                     AlphaF=AlphaF,VF=VF,
+                                     AT=True,FastLinking=True)
+Y_Seg = PCNN_Tools.PCNN_Segmentation(Beta=0.857,AlphaT=0.064,VT=0.63,
+                                     AlphaL=0.653,VL=0.379,
+                                     AlphaF=0.999,VF=0.734)
 PlotArray(Y_Seg,'Segmented Image')
 
 

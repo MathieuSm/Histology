@@ -50,16 +50,16 @@ def DistinguishableColors(N, shuffle=True):
     ColorMap = mpl.colors.ListedColormap(CMap)
 
     return ColorMap
-
-
-def Watershed(GrayImage, Labels, Hmax):
+def WatershedFlood(Image, Labels, Vmax):
     """
     Insipired from master thesis of Josephson
     Does not work, for the moment
     """
 
+    # Number of initial labels
     N = len(np.unique(Labels))
 
+    # Initialize priority queue
     Keys = np.arange(256).astype('int')
     Q = {Key: None for Key in Keys}
 
@@ -67,7 +67,7 @@ def Watershed(GrayImage, Labels, Hmax):
         Y, X = np.where(Labels == i)
 
         for j in range(len(X)):
-            Key = int(round(GrayImage[Y[j], X[j]]))
+            Key = int(round(Image[Y[j], X[j]]))
             Values = [Y[j], X[j]]
 
             if Q[Key]:
@@ -101,7 +101,7 @@ def Watershed(GrayImage, Labels, Hmax):
                         C1 = x == X
                         C2 = y == Y
                         C3 = Labels[y, x] > 0
-                        C4 = GrayImage[y, x] > Hmax
+                        C4 = Image[y, x] > Vmax
 
                         if C1 and C2:
                             continue
@@ -111,7 +111,7 @@ def Watershed(GrayImage, Labels, Hmax):
                             continue
 
                         Labels[y, x] = Marker
-                        Key = int(round(GrayImage[y, x]))
+                        Key = int(round(Image[y, x]))
                         Q[Key] = [Q[Key][0], [y, x]]
 
                 break
