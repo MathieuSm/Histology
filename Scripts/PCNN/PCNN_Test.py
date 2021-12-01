@@ -1422,10 +1422,10 @@ PCNN_Tools = PCNN()
 
 # Find Harvesian canals
 PCNN_Tools.Set_Image(HSV[:,:,1])
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/3)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/4)
 PlotArray(Y_Seg,'Segmented')
 
-Segment = PlotSegment(Y_Seg,3)
+Segment = PlotSegment(Y_Seg,4)
 
 Disk = morphology.disk(15)
 Segments = morphology.binary_dilation(Segment,Disk)
