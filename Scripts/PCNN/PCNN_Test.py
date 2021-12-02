@@ -1442,10 +1442,6 @@ PlotChanels(HSV, 'H', 'S', 'V')
 GS = RGB2Gray(Array)
 PlotArray(GS, 'Grayscale Image')
 
-# D = SpectralDistance(Array)
-# PlotArray(D,'Max spectral distance')
-# D1 = correlate(D,GaussianKernel(10,4))
-
 # Use PCNN tool
 PCNN_Tools = PCNN()
 
