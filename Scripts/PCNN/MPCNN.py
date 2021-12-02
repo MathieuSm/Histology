@@ -99,6 +99,7 @@ print('\nImage segmentation...')
 # Initialize parameters
 S = NormalizeValues(NormArray)
 Y = np.zeros(S.shape)
+Labels = np.zeros(S.shape)
 T = np.zeros(S.shape)
 W = np.array([[0.5, 1, 0.5],
               [1, 0, 1],
@@ -112,8 +113,10 @@ Delta = 1/255
 VT = 10
 Beta = 2
 
-Threshold = 1
+FL_Threshold = 10
+RG_Threshold = 10
 
+Labels_Number = 1
 # Perform segmentation
 while FiredNumber < S.size:
 
@@ -127,6 +130,24 @@ while FiredNumber < S.size:
     Y = (U > Theta) * 1
     NewFired = sum(sum(Y))
 
+    Rows, Columns = np.where(Y == 1)
+    Pixels_list = list(Input_Array[Rows,Columns])
+    Pixels_Labels = Labels[Rows,Columns]
+
+    for Pixel in Pixels_list.pop(0):
+
+        if OldFired == 0 and NewFired > OldFired:
+            Label = Labels_Number
+
+        Pixels_Distances = np.zeros(len(Pixels_Labels))
+        for j in range(len(Pixels_Labels)):
+            Pixels_Distances[j] = EuclidianDistance(Pixel,Pixels[j])
+
+        Pixels2Label = Pixels_Labels[Pixels_Distances < RG_Threshold]
+        Pixels2Label[Pixels2Label == 0] = Label
+
+        ### Continue to do labelling correctly
+
     # Fast linking
     while OldFired != NewFired:
 
@@ -137,7 +158,7 @@ while FiredNumber < S.size:
         Neighbours = Distances[Rows, Columns]
 
         # Keep neurons with small enough spectral distance
-        FastLinked = (Neighbours < Threshold) * 1
+        FastLinked = (Neighbours < FL_Threshold) * 1
 
         # Compute indices of these neurons with small spectral distances
         Neighbours = np.array([-1,0,1])

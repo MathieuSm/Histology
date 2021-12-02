@@ -234,6 +234,31 @@ def RGB2HSV(RGBArray):
     HSV[:, :, 2] = V
 
     return HSV
+def SpectralDistance(RGBArray):
+    """
+    Compute Euclidian distance between pixel and its neighbours
+    :param RGB array
+    :return: D: maximal distance between vectors
+    """
+
+    Distances = np.zeros((RGBArray.shape[0], RGBArray.shape[1], 9))
+    RGBArray_Padded = np.pad(RGBArray, 2, mode='reflect')
+    RGBArray_Padded = RGBArray_Padded[:, :, 2:5]
+
+    for Row in range(RGBArray.shape[0]):
+        for Column in range(RGBArray.shape[1]):
+
+            Vector = RGBArray[Row, Column]
+            k = 0
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    Pi = Row + i + 2
+                    Pj = Column + j + 2
+                    Distances[Row, Column, k] = np.sqrt(sum((Vector - RGBArray_Padded[Pi, Pj]) ** 2))
+                    k += 1
+    D = NormalizeValues(Distances.max(axis=2))
+
+    return D
 def PlotChanels(MChanelsArray, ChanelA, ChanelB, ChanelC):
 
     A = MChanelsArray[:, :, 0]
@@ -1417,11 +1442,15 @@ PlotChanels(HSV, 'H', 'S', 'V')
 GS = RGB2Gray(Array)
 PlotArray(GS, 'Grayscale Image')
 
+# D = SpectralDistance(Array)
+# PlotArray(D,'Max spectral distance')
+# D1 = correlate(D,GaussianKernel(10,4))
+
 # Use PCNN tool
 PCNN_Tools = PCNN()
 
 # Find Harvesian canals
-PCNN_Tools.Set_Image(HSV[:,:,1])
+PCNN_Tools.Set_Image(1-HSV[:,:,1])
 Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/4)
 PlotArray(Y_Seg,'Segmented')
 
