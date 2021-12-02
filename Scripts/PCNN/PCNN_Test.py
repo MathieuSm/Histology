@@ -1451,10 +1451,10 @@ PCNN_Tools = PCNN()
 
 # Find Harvesian canals
 PCNN_Tools.Set_Image(1-HSV[:,:,1])
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/4)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/7)
 PlotArray(Y_Seg,'Segmented')
 
-Segment = PlotSegment(Y_Seg,4)
+Segment = PlotSegment(Y_Seg,7)
 
 Disk = morphology.disk(15)
 Segments = morphology.binary_dilation(Segment,Disk)
@@ -1497,7 +1497,7 @@ PlotArray(Edges,'Edges')
 Combine = (1-Y_Stretched) * Distances / Distances.max() + Limits + Gradient
 PlotArray(Combine,'Combined')
 
-W_Seg = segmentation.watershed(Combine,Markers,connectivity=1)
+W_Seg = segmentation.watershed(Combine,Markers,connectivity=1,mask=1-Limits)
 PlotArray(W_Seg,'Watershed segmentation')
 
 
