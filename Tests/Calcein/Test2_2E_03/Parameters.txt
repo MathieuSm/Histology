@@ -1,0 +1,21 @@
+Sample;Exposure Time (ms);Gain factor(-);Overexposure (bool);Gamma (-);Light (bool);Blue (bool);Comment
+01_01L;100;1;1;0.5;1;0;Initial light image
+01_01F;100;1;0;0.0;0;1;Maximize fluorescence
+01_01N; 20;1;1;0.5;0;1;Normalize fluorescence
+01_01B;100;1;0;0.0;1;0;Bright field 0 gamma
+01_01G; 20;1;1;0.5;1;0;Normal Bright field
+02_01L;100;1;1;0.5;1;0;Initial light image
+02_01F;100;1;0;0.0;0;1;Maximize fluorescence
+02_01N; 20;1;1;0.5;0;1;Normalize fluorescence
+02_01B;100;1;0;0.0;1;0;Bright field 0 gamma
+02_01G; 20;1;1;0.5;1;0;Normal Bright field
+02_02L;100;1;1;0.5;1;0;Initial light image
+02_02F;100;1;0;0.0;0;1;Maximize fluorescence
+02_02N; 20;1;1;0.5;0;1;Normalize fluorescence
+02_02B;100;1;0;0.0;1;0;Bright field 0 gamma
+02_02G; 20;1;1;0.5;1;0;Normal Bright field
+03_01L;100;1;1;0.5;1;0;Initial light image
+03_01F;100;1;0;0.0;0;1;Maximize fluorescence
+03_01N; 20;1;1;0.5;0;1;Normalize fluorescence
+03_01B;100;1;0;0.0;1;0;Bright field 0 gamma
+03_01G; 20;1;1;0.5;1;0;Normal Bright field
