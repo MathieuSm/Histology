@@ -4,6 +4,8 @@ Code for testing PCNN-PSO-AT with different inputs or fitness function
 
 import os
 import time
+
+import matplotlib.colors
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
@@ -234,6 +236,31 @@ def RGB2HSV(RGBArray):
     HSV[:, :, 2] = V
 
     return HSV
+def HSV2RGB(HSVArray):
+    h, s, v = HSVArray[:,:,0], HSVArray[:,:,1], HSVArray[:,:,2]
+    shape = h.shape
+    i = np.int_(h*6.)
+    f = h*6.-i
+
+    q = f
+    t = 1.-f
+    i = np.ravel(i)
+    f = np.ravel(f)
+    i%=6
+
+    t = np.ravel(t)
+    q = np.ravel(q)
+
+    s = np.ravel(s)
+    v = np.ravel(v)
+
+    clist = (1-s*np.vstack([np.zeros_like(f),np.ones_like(f),q,t]))*v
+
+    #0:v 1:p 2:q 3:t
+    order = np.array([[0,3,1],[2,0,1],[1,0,3],[1,2,0],[3,1,0],[0,1,2]])
+    rgb = clist[order[i], np.arange(np.prod(shape))[:,None]]
+
+    return rgb.reshape(shape+(3,))
 def SpectralDistance(RGBArray):
     """
     Compute Euclidian distance between pixel and its neighbours
@@ -663,70 +690,6 @@ def PSO_PCNN(GrayScaleImage,SegmentedImage,Ps=20,AT=False,FastLinking=False):
         ParametersDictionary[ParameterName] = ParameterValue
 
     return ParametersDictionary
-def WatershedFlood(Image, Labels, Vmax):
-    """
-    Insipired from master thesis of Josephson
-    Does not work, for the moment
-    """
-
-    # Number of initial labels
-    N = len(np.unique(Labels))
-
-    # Initialize priority queue
-    Keys = np.arange(256).astype('int')
-    Q = {Key: None for Key in Keys}
-
-    # Transform image in 8bits integer image
-    Image = np.round(NormalizeValues(Image) * 255).astype('uint8')
-
-    for i in range(N):
-        Y, X = np.where(Labels == i + 1)
-
-        for j in range(len(X)):
-            Key = Image[Y[j], X[j]]
-            Values = [Y[j], X[j]]
-
-            if Q[Key]:
-                Q[Key] = [Q[Key][0], Values]
-            else:
-                Q[Key] = [Values]
-
-    EmptyQ = False
-
-    while not EmptyQ:
-
-        for i in range(256):
-
-            if not Q[i]:
-                EmptyQ = True
-                continue
-
-            EmptyQ = False
-
-            for j in range(len(Q[i])):
-                Y, X = Q[i].pop(0)
-                cX = [X - 1, X, X + 1]
-                cY = [Y - 1, Y, Y + 1]
-                Marker = Labels[Y, X]
-
-                for x in cX:
-                    for y in cY:
-
-                        C1 = x == X
-                        C2 = y == Y
-                        C3 = Labels[y, x] > 0
-                        C4 = Image[y, x] > Vmax
-
-                        if not (C1 * C2 + C3 + C4):
-                            Labels[y, x] = Marker
-                            Key = Image[y, x]
-                            Q[Key] = [Q[Key][0], [y, x]]
-
-                break
-
-            break
-
-    return Labels
 
 
 # Define PCNN class
@@ -1462,6 +1425,8 @@ PCNN_Tools.Set_Image(1-HSV[:,:,1])
 Y = PCNN_Tools.Enhancement()
 Y_Stretched = GrayStretch(Y,0.95)
 PlotArray(Y_Stretched, 'Enhanced Image')
+
+
 PCNN_Tools.Set_Image(Y_Stretched)
 Y_Seg = PCNN_Tools.SPCNN_Segmentation(Beta=0.289,Delta=0.787,VT=0.503)
 PlotArray(Y_Seg,'Segmented Image')
@@ -1495,6 +1460,93 @@ PlotArray(Combine,'Combined')
 
 W_Seg = segmentation.watershed(Combine,Markers,connectivity=1,mask=1-Limits)
 PlotArray(W_Seg,'Watershed segmentation')
+
+
+def WatershedFlood(Image, Labels, Vmax):
+    """
+    Insipired from master thesis of Josephson
+    Does not work, for the moment
+    """
+
+    # Number of initial labels
+    N = len(np.unique(Labels))
+
+    # Initialize priority queue
+    Keys = np.arange(256).astype('int')
+    Q = {Key: [] for Key in Keys}
+
+    # Transform image in 8bits integer image
+    Image = np.round(NormalizeValues(Image) * 255).astype('uint8')
+
+    for i in range(N):
+        Y, X = np.where(Labels == i + 1)
+
+        for j in range(len(X)):
+            Key = Image[Y[j], X[j]]
+            Values = [Y[j], X[j]]
+
+            if Q[Key]:
+                Q[Key] = [Q[Key][0], Values]
+            else:
+                Q[Key] = [Values]
+
+    EmptyQ = False
+
+    while not EmptyQ:
+
+        for i in range(256):
+
+            if not Q[i]:
+                EmptyQ = True
+                continue
+
+            EmptyQ = False
+
+            for j in range(len(Q[i])):
+                Y, X = Q[i].pop(0)
+
+                if X == 0:
+                    cX = [X, X + 1]
+                elif X == Image.shape[1] - 1:
+                    cX = [X - 1, X]
+                else:
+                    cX = [X - 1, X, X + 1]
+                if Y == 0:
+                    cY = [Y, Y + 1]
+                elif Y == Image.shape[0] - 1:
+                    cY = [Y - 1, Y]
+                else:
+                    cY = [Y - 1, Y, Y + 1]
+
+                Marker = Labels[Y, X]
+
+                for x in cX:
+                    for y in cY:
+
+                        C1 = x == X
+                        C2 = y == Y
+                        C3 = Labels[y, x] > 0
+                        C4 = Image[y, x] > Vmax
+
+                        if not (C1 * C2 + C3 + C4):
+                            Labels[y, x] = Marker
+                            Key = Image[y, x]
+                            Values = [y, x]
+
+                            if Q[Key]:
+                                Q[Key] = [Q[Key][0], Values]
+                            else:
+                                Q[Key] = [Values]
+
+                break
+
+            break
+
+    return Labels
+
+
+Test = WatershedFlood(Combine,Markers,250)
+PlotArray(Test == 3,'WatershedTest')
 
 
 ## Segment combined array, label it and try watershed
