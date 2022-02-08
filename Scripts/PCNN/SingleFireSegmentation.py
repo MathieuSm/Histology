@@ -1,6 +1,6 @@
 """
 Example code for image segmentation using PCNN and neuron single activation
-"""""
+"""
 
 import numpy as np
 import matplotlib.pyplot as plt

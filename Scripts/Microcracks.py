@@ -15,10 +15,13 @@ np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind
 pd.set_option('display.width', desired_width)
 plt.rc('font', size=12)
 
-def PlotArray(Array, Title):
+def PlotArray(Array, Title, Colormap=False):
 
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-    Axes.imshow(Array)
+    if Colormap:
+        Axes.imshow(Array,cmap=Colormap)
+    else:
+        Axes.imshow(Array)
     plt.title(Title)
     plt.axis('off')
     plt.tight_layout()
@@ -111,6 +114,7 @@ Tests.sort()
 
 # Analyze images of 1 directory
 Data = pd.DataFrame()
+Background = pd.DataFrame()
 for TestNumber in range(3):
     TestDir = os.path.join(Directory,Tests[TestNumber]) + '/'
     Parameters = pd.read_csv(TestDir + 'Parameters.txt',sep=';')
@@ -136,7 +140,7 @@ for TestNumber in range(3):
         Threshold = OtsuFilter.GetThreshold()
 
         OtsuArray = sitk.GetArrayFromImage(OtsuImage)
-        # PlotArray(OtsuArray * GreenValues, Sample)
+        PlotArray(OtsuArray * GreenValues, '', Colormap='binary_r')
 
         # Extract segmented image data
         Values = (OtsuArray * GreenValues)
@@ -146,11 +150,20 @@ for TestNumber in range(3):
                 'Values':Values_Array}
         Data = Data.append(Dict,ignore_index=True)
 
+        # Extract segmented image background data
+        Values = (1-OtsuArray) * GreenValues
+        Values_Array = Values[Values > 0].ravel()
+        Dict = {'Test': Tests[TestNumber],
+                'Sample': Sample,
+                'Values': Values_Array}
+        Background = Background.append(Dict, ignore_index=True)
+
 
 # Plot Stats
+TestSamples = Data['Test'].drop_duplicates().sort_values().values
 GroupedData = Data.groupby(by='Test')
 Figure, Axes = plt.subplots(1, 1, figsize=(3.5, 4.5),dpi=100)
-Axes.boxplot(Data.groupby(by='Test').loc[:,'Values'],vert=True,
+Axes.boxplot(Data.loc[:,'Values'],vert=True,
              showmeans=True,
              boxprops=dict(linestyle='-',color=(0,0,0)),
              medianprops=dict(linestyle='-',color=(1,0,0)),
@@ -159,8 +172,9 @@ Axes.boxplot(Data.groupby(by='Test').loc[:,'Values'],vert=True,
              flierprops=dict(marker='o',markeredgecolor=(0,0,0,0.01)))
 Axes.plot([],linestyle='-',color=(1,0,0),label='Median')
 Axes.plot([],linestyle='none',marker='x',color=(0,0,1),label='Mean')
+Axes.set_xlabel('Sample')
 Axes.set_ylabel('Pixel Intensity')
-Axes.set_xticks([])
+Axes.set_xticks([2.5, 5, 6])
 Axes.set_ylim([0,255])
 Axes.set_title('')
 plt.title('')
@@ -170,3 +184,24 @@ plt.subplots_adjust(0.2)
 plt.show()
 plt.close(Figure)
 
+Figure, Axes = plt.subplots(1, 1, figsize=(3.5, 4.5),dpi=100)
+Axes.boxplot(Background.loc[:,'Values'],vert=True,
+             showmeans=True,
+             boxprops=dict(linestyle='-',color=(0,0,0)),
+             medianprops=dict(linestyle='-',color=(1,0,0)),
+             whiskerprops=dict(linestyle='--',color=(0,0,0)),
+             meanprops=dict(marker='x',markeredgecolor=(0,0,1)),
+             flierprops=dict(marker='o',markeredgecolor=(0,0,0,0.01)))
+Axes.plot([],linestyle='-',color=(1,0,0),label='Median')
+Axes.plot([],linestyle='none',marker='x',color=(0,0,1),label='Mean')
+Axes.set_xlabel('Sample')
+Axes.set_ylabel('Pixel Intensity')
+Axes.set_xticks([2.5, 5, 6])
+Axes.set_ylim([0,255])
+Axes.set_title('')
+plt.title('')
+plt.legend(loc='upper center',ncol=2, handletextpad=0.2, frameon=False)
+plt.suptitle('')
+plt.subplots_adjust(0.2)
+plt.show()
+plt.close(Figure)

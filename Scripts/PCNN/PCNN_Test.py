@@ -1,6 +1,6 @@
 """
 Code for testing PCNN-PSO-AT with different inputs or fitness function
-"""""
+"""
 
 import os
 import time
