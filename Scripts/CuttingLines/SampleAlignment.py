@@ -276,12 +276,13 @@ def Main(Arguments, Neck=None, FigColor=(0.17, 0.18, 0.22)):
     PadArray = np.pad(BinArray, pad_width=Radius + 1)
     Disk = morphology.disk(Radius)
 
-    Figure, Axes = plt.subplots(1, 2, figsize=(8, 4.5), facecolor=FigColor)
     for iSlice in range(2):
         if iSlice == 0:
             Slice = PadArray[PadWidth[0] + Radius + 1 + 2, :, :]
+            Image = R_Sample_Array[PadWidth[0] + 2, :, :]
         else:
             Slice = PadArray[-(PadWidth[0] + Radius + 1) - 1 - 2,:,:]
+            Image = R_Sample_Array[-PadWidth[0] - 2, :, :]
 
         DilatedArray = morphology.binary_dilation(Slice, Disk)
         ErodedArray = morphology.binary_erosion(DilatedArray, Disk)
@@ -312,31 +313,44 @@ def Main(Arguments, Neck=None, FigColor=(0.17, 0.18, 0.22)):
         X_Line = np.linspace(0,R_Sample_Array.shape[2],100)
         Y_Line = X_Line * np.tan(Angle/2 * np.pi/180)
 
-        Axes[iSlice].imshow(Slice[Radius + 1:-Radius, Radius + 1:-Radius], cmap='bone')
-        Axes[iSlice].plot(X0, Y0, marker='x', color=(0, 0, 1), linestyle='none', markersize=10, mew=2, label='Centroid')
-        Axes[iSlice].plot(X0 + Ellipse_R[0, :], Y0 - Ellipse_R[1, :], color=(0, 1, 0), label='Fitted ellipse')
-        Axes[iSlice].plot(X0 + X_Line, Y0 + Y_Line, color=(1,0,0))
-        Axes[iSlice].plot(X0 - X_Line, Y0 + Y_Line, color=(1, 0, 0))
-        Axes[iSlice].plot(X0 + X_Line, Y0 - Y_Line, color=(1, 0, 0))
-        Axes[iSlice].plot(X0 - X_Line, Y0 - Y_Line, color=(1, 0, 0), label='Cutting lines')
-        Axes[iSlice].set_xlim([0,R_Sample_Array.shape[2]])
-        Axes[iSlice].set_ylim([R_Sample_Array.shape[1],0])
-        Axes[iSlice].axis('off')
+        # Print image with correct size
+        ImageSize = Image.shape[::-1]
+        ImageSpacing = np.array(Scan.GetSpacing())[:2]
+        PhysicalSize = ImageSize * ImageSpacing
+
+        Inch = 25.4
+        mm = 1 / Inch
+        Subsampling = 1
+        DPI = np.round(1 / ImageSpacing / Subsampling * Inch)[0]
+        Margins = np.array([0., 0.])
+        FigureSize = ImageSpacing * ImageSize * mm
+
+        RealMargins = [Margins[0] / 2 * PhysicalSize[0] / (FigureSize[0] * Inch),
+                       Margins[1] / 2 * PhysicalSize[1] / (FigureSize[1] * Inch),
+                       1 - Margins[0] / 2 * PhysicalSize[0] / (FigureSize[0] * Inch),
+                       1 - Margins[1] / 2 * PhysicalSize[1] / (FigureSize[1] * Inch)]
+
+        Figure, Axes = plt.subplots(1,1, figsize=FigureSize, dpi=int(DPI), facecolor=FigColor)
+        Axes.imshow(Image, cmap='bone')
+        Axes.plot(X0, Y0, marker='x', color=(0, 0, 1), linestyle='none', markersize=10, mew=2, label='Centroid')
+        Axes.plot(X0 + Ellipse_R[0, :], Y0 - Ellipse_R[1, :], color=(0, 1, 0), label='Fitted ellipse')
+        Axes.plot(X0 + X_Line, Y0 + Y_Line, color=(1,0,0))
+        Axes.plot(X0 - X_Line, Y0 + Y_Line, color=(1, 0, 0))
+        Axes.plot(X0 + X_Line, Y0 - Y_Line, color=(1, 0, 0))
+        Axes.plot(X0 - X_Line, Y0 - Y_Line, color=(1, 0, 0), label='Cutting lines')
+        Axes.set_xlim([0,R_Sample_Array.shape[2]])
+        Axes.set_ylim([R_Sample_Array.shape[1],0])
+        Axes.axis('off')
 
         if iSlice == 0:
-            Axes[iSlice].set_title('Proximal Slice')
-            Axes[iSlice].text(-0.1, 0.5, 'Lateral', horizontalalignment='center',
-                              verticalalignment='center',transform=Axes[iSlice].transAxes,
-                              rotation=90, fontsize=15)
+            plt.subplots_adjust(RealMargins[0], RealMargins[1], RealMargins[2], RealMargins[3])
+            plt.savefig(TxtFileName[:-6] + '_Proximal.png', dpi=int(DPI))
+            plt.show()
 
         else:
-            Axes[iSlice].text(1.1, 0.5, 'Medial', horizontalalignment='center',
-                              verticalalignment='center', transform=Axes[iSlice].transAxes,
-                              rotation=90, fontsize=15)
-            Axes[iSlice].set_title('Distal Slice')
 
-
-            plt.savefig(TxtFileName[:-6] + '.png')
+            plt.subplots_adjust(RealMargins[0], RealMargins[1], RealMargins[2], RealMargins[3])
+            plt.savefig(TxtFileName[:-6] + '_Distal.png',dpi=int(DPI))
             plt.show()
 
 if __name__ == '__main__':
