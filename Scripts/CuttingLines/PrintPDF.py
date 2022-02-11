@@ -1,17 +1,54 @@
 import os
 
-MainDirectory = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
+MainDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD\06_Histology\Cutting Lines'
 
-FileName = 'C0002074_Proximal.png'
+
+# Unit conversion
+# mm = 1
+# pt = 2.835
+# pc = 0.236
+# px = 3.78
+
+Font = ['Norasi', 'Normal', 18*pt, 'center', 'middle', '#000000']
+
+Text = ['C0002337','C0002337','Proximal Slice','Distal Slice']
+XPos = [62*mm, 142*mm, 62*mm, 142*mm]
+YPos = [35*mm, 35*mm, 87*mm, 87*mm]
+
+for i in range(4):
+     text(Text[i], (XPos[i], YPos[i] + Font[2] / 2),
+          font_family=Font[0],
+          font_weight=Font[1],
+          font_size=Font[2],
+          text_align=Font[3],
+          text_anchor=Font[4],
+          fill=Font[5])
+
+
+Text = ['Lateral','Medial','Lateral','Medial']
+XPos = [35*mm, 89*mm, 115*mm, 168*mm]
+YPos = [25*mm, 25*mm, 25*mm, 25*mm]
+
+for i in range(4):
+     Transform = 'rotate(90,(' + str(XPos[i]) + ',' + str(YPos[i]) + '))'
+     transform(Transform)
+
+     text(Text[i], (XPos[i], YPos[i] + Font[2] / 2),
+          font_family=Font[0],
+          font_weight=Font[1],
+          font_size=Font[2],
+          text_align=Font[3],
+          text_anchor=Font[4],
+          fill=Font[5])
 
 Factor = 0.27312
-
 transform('scale(0.27312, 0.27312)')
-
+FileName = 'C0002337_Proximal.png'
 image(os.path.join(MainDirectory,FileName), (40/Factor*mm, 40/Factor*mm), embed=True)
 
-FileName = 'C0002074_Distal.png'
+FileName = 'C0002337_Distal.png'
 image(os.path.join(MainDirectory,FileName), (120/Factor*mm, 40/Factor*mm), embed=True)
+
 
 
 # ########################################################################
