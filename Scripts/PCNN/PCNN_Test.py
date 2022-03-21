@@ -1391,6 +1391,7 @@ class PCNN:
 # Set path
 CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
+ImageDirectory = CurrentDirectory + '/Tests/Osteons/HumanBone/'
 
 # Open image to segment
 Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')

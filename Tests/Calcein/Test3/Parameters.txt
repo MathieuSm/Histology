@@ -1,0 +1,7 @@
+Sample;Exposure Time (ms);Gain factor(-);Overexposure (bool);Gamma (-);Light (bool);Blue (bool);Comment
+22-012/437 RP - 1;50;1;0;0.5;1;0;
+22-012/437 RP - 2;50;1;0;0.5;1;1;
+22-012/437 RP - 3;100;1;0;0.0;1;1;
+
+22-012/437 LP - 3;80;1;0;0.0;1;1;
+22-012/437 LP - 3;50;1;0;0.0;1;1;
