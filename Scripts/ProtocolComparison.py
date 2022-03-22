@@ -33,10 +33,10 @@ Disk = morphology.disk(20)
 MR_Bin = morphology.binary_dilation(MR_Bin,Disk)
 MR_Bin = morphology.binary_erosion(MR_Bin,Disk)
 
-Figure, Axes = plt.subplots(1,1)
-Axes.imshow(MR_Bin[6150:,4000:9000], cmap='binary')
-Axes.axis('off')
-plt.show()
+# Figure, Axes = plt.subplots(1,1)
+# Axes.imshow(MR_Bin[6150:,4000:9000], cmap='binary')
+# Axes.axis('off')
+# plt.show()
 
 
 MedialStained = sitk.ReadImage(ImageDirectory + '22_010_R_dist_medial_03_20.jpg')
@@ -52,17 +52,20 @@ MS_Bin = morphology.binary_dilation(MS_Bin,Disk)
 MS_Bin = morphology.binary_erosion(MS_Bin,Disk)
 
 
-Figure, Axes = plt.subplots(1,1)
-Axes.imshow(MS_Bin[5300:,6150:], cmap='binary')
-Axes.axis('off')
-plt.show()
+# Figure, Axes = plt.subplots(1,1)
+# Axes.imshow(MS_Bin[5300:,6150:], cmap='binary')
+# Axes.axis('off')
+# plt.show()
 
 
 # Register images
 ParameterMap = sitk.GetDefaultParameterMap('rigid')
 
-FixedImage = MS_Bin[5300:,6150:]*1
-MovingImage = MR_Bin[6150:,4000:9000]*1
+FixedImage = np.zeros(MS_Bin.shape)
+FixedImage[5300:,6150:] = MS_Bin[5300:,6150:]*1
+
+MovingImage = np.zeros(MR_Bin.shape)
+MovingImage[6150:,4000:9000] = MR_Bin[6150:,4000:9000]*1
 
 ElastixImageFilter = sitk.ElastixImageFilter()
 ElastixImageFilter.SetParameterMap(ParameterMap)
@@ -87,19 +90,14 @@ TransformixImageFilter.SetTransformParameterMap(TransformParameterMap)
 TransformixImageFilter.SetOutputDirectory(ImageDirectory)
 
 RGB = sitk.GetArrayFromImage(MedialOriginal)
-TransformedArray = np.zeros((MedialStained.GetWidth(),MedialStained.GetHeight(),3))
+TransformedArray = np.zeros(sitk.GetArrayFromImage(MedialStained).shape)
 
 for i in range(3):
     TransformixImageFilter.SetMovingImage(sitk.GetImageFromArray(RGB[:,:,i]))
     TransformedImage = TransformixImageFilter.Execute()
-    TransformedArray[:,:,i] = sitk.GetArrayFromImage(TransformedImage)
+    TransformedArray[:,:,i] += sitk.GetArrayFromImage(TransformedImage)
 
-TransformedImages = [sitk.GetArrayFromImage(TransformedImage0),
-                     sitk.GetArrayFromImage(TransformedImage1),
-                     sitk.GetArrayFromImage(TransformedImage2)]
-TransformedImage = np.zeros(MedialStained_Array.shape)
-for i in range(3):
-    TransformedImage[:,:,i] += TransformedImages[i]
+TransformedArray_R = np.round(TransformedArray)
 
 Figure, Axes = plt.subplots(1,1)
 Axes.imshow(TransformedArray)
