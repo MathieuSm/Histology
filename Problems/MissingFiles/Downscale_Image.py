@@ -75,7 +75,7 @@ def Main(Arguments=None, SitkImage=None, Factor=1.):
     Centering_Transform = sitk.TranslationTransform(Dimension)
     Image_Center = np.array(SitkImage.TransformContinuousIndexToPhysicalPoint(np.array(SitkImage.GetSize()) / 2.0))
     Centering_Transform.SetOffset(np.array(Transform.GetInverse().TransformPoint(Image_Center) - Reference_Center))
-    Centered_Transform = sitk.Transform(Transform)
+    Centered_Transform = sitk.CompositeTransform(Transform)
     Centered_Transform.AddTransform(Centering_Transform)
 
     # Perform downscaling and return new image

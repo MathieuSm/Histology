@@ -1,8 +1,8 @@
 import os
 import numpy as np
 
-# MainDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD\06_Histology\Cutting Lines'
-MainDirectory = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
+MainDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD\06_Histology\Cutting Lines'
+# MainDirectory = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
 
 
 # Unit conversion
@@ -14,7 +14,7 @@ MainDirectory = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
 Font = ['Norasi', 'Normal', 18*pt, 'center', 'middle', '#000000']
 
 Scans = ['C0002074','C0002076','C0002078']
-Scans = ['C0002337','C0002338']
+# Scans = ['C0002337','C0002338']
 
 Factor = 0.27312
 
@@ -31,10 +31,10 @@ for Scan in Scans:
 
      for i in range(4):
 
-          X = (XPos[i] + 0 * Delta) * mm
-          Y = (YPos[i] + ScanNumber * Delta) * mm
+          X = (XPos[i] + 0 * Delta)
+          Y = (YPos[i] + ScanNumber * Delta)
 
-          text(Text[i], (X, Y + Font[2] / 2),
+          text(Text[i], (X * mm, Y * mm + Font[2] / 2),
                font_family=Font[0],
                font_weight=Font[1],
                font_size=Font[2],
@@ -50,10 +50,10 @@ for Scan in Scans:
 
      for i in range(4):
 
-          X = (XPos[i] + 0 * Delta) * mm
-          Y = (YPos[i] + ScanNumber * Delta) * mm
+          X = (XPos[i] + 0 * Delta)*mm
+          Y = (YPos[i] + ScanNumber * Delta)*mm
 
-          Transform = 'rotate(-90,(' + str(X) + ',' + str(Y) + '))'
+          Transform = 'rotate(-90, ' + str(X) + ',' + str(Y) + ' )'
           transform(Transform)
 
           text(Text[i], (X, Y + Font[2] / 2),
