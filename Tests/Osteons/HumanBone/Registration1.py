@@ -7,9 +7,9 @@ from skimage import morphology
 def RGBThreshold(RGBArray, Threshold):
     R, G, B = RGBArray[:, :, 0], RGBArray[:, :, 1], RGBArray[:, :, 2]
 
-    R_Filter = R < Threshold[0]
+    R_Filter = R > Threshold[0]
     G_Filter = G < Threshold[1]
-    B_Filter = B > Threshold[2]
+    B_Filter = B < Threshold[2]
 
     BinArray = np.zeros((RGBArray.shape[0], RGBArray.shape[1]))
     BinArray[R_Filter & G_Filter & B_Filter] = 1
@@ -21,15 +21,15 @@ CurrentDirectory = os.getcwd()
 ImageDirectory = CurrentDirectory + '/Tests/Osteons/HumanBone/'
 
 # Read images
-MedialOriginal = sitk.ReadImage(ImageDirectory + 'Stained1.png')
+MedialOriginal = sitk.ReadImage(ImageDirectory + 'Original.png')
 MO_Array = sitk.GetArrayFromImage(MedialOriginal)
 
 Figure, Axes = plt.subplots(1,1)
-Axes.imshow(MO_Array[1350:1450,1150:1250])
+Axes.imshow(MO_Array)
 Axes.axis('off')
 plt.show()
 
-Threshold = [100, 100, 150]
+Threshold = [220, 50, 50]
 MO_Bin = RGBThreshold(MO_Array,Threshold)
 
 Figure, Axes = plt.subplots(1,1)
@@ -53,17 +53,16 @@ Axes.axis('off')
 plt.show()
 
 
-MedialStained = sitk.ReadImage(ImageDirectory + 'Stained2.png')
+MedialStained = sitk.ReadImage(ImageDirectory + 'Stained.png')
 MS_Array = sitk.GetArrayFromImage(MedialStained)
-
-Figure, Axes = plt.subplots(1,1)
-Axes.imshow(MS_Array)
-Axes.axis('off')
-plt.show()
 
 Threshold = [220, 50, 50]
 MS_Bin = RGBThreshold(MS_Array,Threshold)
 
+Figure, Axes = plt.subplots(1,1)
+Axes.imshow(MS_Bin, cmap='binary')
+Axes.axis('off')
+plt.show()
 
 Disk = morphology.disk(12)
 MS_Bin = morphology.binary_dilation(MS_Bin,Disk)
@@ -89,8 +88,8 @@ ParameterMap['MaximumNumberOfIterations'] = [str(1000)]
 ParameterMap['SP_alpha'] = [str(500)]
 ParameterMap['SP_A'] = [str(0.1)]
 
-FixedImage = MS_Array[:,:,2]
-MovingImage = MO_Array[:,:,2]
+FixedImage = MS_Array[:,:,0]
+MovingImage = MO_Array[:,:,0]
 
 ElastixImageFilter = sitk.ElastixImageFilter()
 ElastixImageFilter.SetParameterMap(ParameterMap)
@@ -128,16 +127,16 @@ TransformedArray_N = (TransformedArray - TransformedArray.min()) / (TransformedA
 TransformedArray_R = np.round(TransformedArray_N*255).astype('int')
 
 
-Figure, Axes = plt.subplots(1,1,figsize=(55.44,55.97),dpi=100)
-Axes.imshow(TransformedArray_R[10:-10,40:-10])
+Figure, Axes = plt.subplots(1,1,figsize=(30.16,27.08),dpi=100)
+Axes.imshow(TransformedArray_R[:-8:,32:])
 Axes.axis('off')
 plt.subplots_adjust(0,0,1,1)
-plt.savefig(ImageDirectory+'Stained1_Registered.png')
+plt.savefig(ImageDirectory+'Original_Registered.png')
 plt.show()
 
-Figure, Axes = plt.subplots(1,1,figsize=(55.44,55.97),dpi=100)
-Axes.imshow(sitk.GetArrayFromImage(MedialStained)[10:-10,40:-10])
+Figure, Axes = plt.subplots(1,1,figsize=(30.16,27.08),dpi=100)
+Axes.imshow(sitk.GetArrayFromImage(MedialStained)[:-8:,32:])
 Axes.axis('off')
 plt.subplots_adjust(0,0,1,1)
-plt.savefig(ImageDirectory+'Stained2_Registered.png')
+plt.savefig(ImageDirectory+'Stained_Registered.png')
 plt.show()
