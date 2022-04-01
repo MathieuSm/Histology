@@ -22,6 +22,8 @@
 *.BMP
 *.gif
 *.tiff
+*.TIF
+*.JPG
 
 # Ignore auxiliary tex files
 *.aux
