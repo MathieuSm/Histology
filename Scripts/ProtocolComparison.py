@@ -213,14 +213,18 @@ RegionProperties = measure.regionprops(C1_Labels)
 
 R, G, B = {}, {}, {}
 for Region in RegionProperties:
-    R[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],0]
-    G[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],1]
-    B[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],2]
+    R[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],0]
+    G[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],1]
+    B[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],2]
+
+# R_P2 = R
+# G_P2 = G
+# B_P2 = B
 
 
-i = 1
+i = 5
 Figure, Axes = plt.subplots(1,1)
-Axes.imshow(P1_Array)
+Axes.imshow(P2_Array)
 Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
 Axes.plot(RegionProperties[i-1].coords[0,1],RegionProperties[i-1].coords[0,0],
              marker='o',linestyle='none',color=(1,0,0),label='Start')
@@ -231,30 +235,56 @@ Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.1,RegionProperties[i-1].coor
 plt.legend(loc='lower right')
 plt.show()
 
-
-FigPath = r'C:\Users\mathi\OneDrive\Documents\PhD\02_Meetings\03_MicroMeso\Pictures\StainingProtocol'
+from pathlib import Path
+FigPath = Path(CurrentDirectory[:-12])
+FigPath = FigPath / '02_Meetings/03_MicroMeso/Pictures/StainingProtocol'
 plt.rcParams['font.size'] = '16'
 
 Figure, Axes = plt.subplots(1,1)
-Axes.plot(R[str(i)],color=(1,0,0))
-Axes.plot(G[str(i)],color=(0,1,0))
-Axes.plot(B[str(i)],color=(0,0,1))
+Axes.plot(R[str(i)][::-10],color=(1,0,0))
+Axes.plot(G[str(i)][::-10],color=(0,1,0))
+Axes.plot(B[str(i)][::-10],color=(0,0,1))
+Axes.plot(R_P1[str(i)][::-10],color=(1,0,0),linestyle='--')
+Axes.plot(G_P1[str(i)][::-10],color=(0,1,0),linestyle='--')
+Axes.plot(B_P1[str(i)][::-10],color=(0,0,1),linestyle='--')
 Axes.set_ylim([0,255])
 Axes.set_xticks([])
 plt.box(False)
-plt.savefig(FigPath + '\Signal1.png', transparent=True)
+# plt.savefig(FigPath / str('Signal' + str(i) + '.png'), transparent=True)
 plt.show()
 
-Figure, Axes = plt.subplots(1,1,figsize=(11.34,7.73))
+Figure, Axes = plt.subplots(1,1,figsize=(5.32,4.72))
 Axes.imshow(P1_Array)
 # Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
 Axes.plot(RegionProperties[i-1].coords[0,1],RegionProperties[i-1].coords[0,0],
              marker='o',linestyle='none',color=(0,0,0),label='Start')
 Axes.plot(RegionProperties[i-1].coords[-1,1],RegionProperties[i-1].coords[-1,0],
              marker='o',linestyle='none',color=(0,0,0),label='Stop')
-Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.8,RegionProperties[i-1].coords[0,1]*1.15])
-Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.2,0])
+Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.8,RegionProperties[i-1].coords[0,1]*1.2])
+Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.025,RegionProperties[i-1].coords[0,0]*0.975])
 # plt.legend(loc='lower right')
 plt.subplots_adjust(0,0,1,1)
 plt.axis('off')
 plt.show()
+
+
+# Get mean signal to evaluate contrast
+RG_P1 = {}
+RG_P2 = {}
+C_P1 = {}
+C_P2 = {}
+for i in range(1,6):
+    RG_P1[str(i)] = (R_P1[str(i)].astype('int') + G_P1[str(i)].astype('int')) / 2
+    RG_P2[str(i)] = (R_P2[str(i)].astype('int') + G_P2[str(i)].astype('int')) / 2
+    C_P1[str(i)] = B_P1[str(i)] - RG_P1[str(i)]
+    C_P2[str(i)] = B_P2[str(i)] - RG_P2[str(i)]
+
+Figure, Axes = plt.subplots(1,1)
+Axes.plot(C_P1[str(i)][::-1],color=(1,0,0),label='Protocol 1')
+Axes.plot(C_P2[str(i)][::-1],color=(0,0,1),label='Protocol 1')
+Axes.set_ylim([0,255])
+# Axes.set_xticks([])
+# plt.box(False)
+# plt.savefig(FigPath / str('Signal' + str(i) + '.png'), transparent=True)
+plt.show()
+
