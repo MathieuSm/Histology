@@ -2,8 +2,9 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from skimage import morphology
+from skimage import morphology, measure
 import pandas as pd
+
 
 def RGBThreshold(RGBArray, Threshold):
     R, G, B = RGBArray[:, :, 0], RGBArray[:, :, 1], RGBArray[:, :, 2]
@@ -121,25 +122,28 @@ T1 = np.zeros(P1_Array.shape).astype('int')
 T1[:,:,0][S1_Bin == 1] = 255
 T1[:,:,3][S1_Bin == 1] = 50
 
-Figure, Axes = plt.subplots(1, 1)
+Figure, Axes = plt.subplots(1, 1, figsize=(15,30))
 Axes.imshow(P1_Array[1400:1700, 1600:1750])
 Axes.imshow(T1[1400:1700, 1600:1750])
 Axes.axis('off')
+plt.subplots_adjust(0,0,1,1)
 plt.show()
 
 for i in [5,10,15]:
 
     Disk = morphology.disk(i)
     S1_Big = morphology.binary_dilation(S1_Bin,Disk)
+    S1_Big = S1_Big*1 - S1_Bin*1
 
     T1 = np.zeros(P1_Array.shape).astype('int')
     T1[:, :, 0][S1_Big == 1] = 255
     T1[:, :, 3][S1_Big == 1] = 50
 
-    Figure, Axes = plt.subplots(1, 1)
+    Figure, Axes = plt.subplots(1, 1, figsize=(15,30))
     Axes.imshow(P1_Array[1400:1700, 1600:1750])
     Axes.imshow(T1[1400:1700, 1600:1750])
     Axes.axis('off')
+    plt.subplots_adjust(0, 0, 1, 1)
     plt.show()
 
     # Collect protocols values
@@ -173,7 +177,6 @@ for i in [5,10,15]:
     F_V2_B = V2_B_DF[FR_Min & FG_Min & FB_Min & FR_Max & FG_Max & FB_Max]
 
     # Boxplot of the values
-
     Figure, Axes = plt.subplots(1,1)
     BoxProps = dict(linestyle='-', linewidth=1, color=(0,0,1))
     MedianProps = dict(linestyle='-', linewidth=1, color=(0,0,1))
@@ -193,3 +196,65 @@ for i in [5,10,15]:
     # Axes.axis('off')
     plt.show()
 
+
+# Signal analysis
+C1 = sitk.ReadImage(ImageDirectory + 'Stained1_Signal.png')
+C1_Array = sitk.GetArrayFromImage(C1)
+
+# Build binary segmented image
+C1_Bin = np.zeros(C1_Array.shape).astype('int')
+F_R = C1_Array[:,:,0] > 230
+F_G = C1_Array[:,:,1] < 50
+F_B = C1_Array[:,:,2] < 50
+C1_Bin[F_R & F_G & F_B] = 1
+
+C1_Labels = morphology.label(C1_Bin[:,:,0])
+RegionProperties = measure.regionprops(C1_Labels)
+
+R, G, B = {}, {}, {}
+for Region in RegionProperties:
+    R[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],0]
+    G[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],1]
+    B[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],2]
+
+
+i = 1
+Figure, Axes = plt.subplots(1,1)
+Axes.imshow(P1_Array)
+Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
+Axes.plot(RegionProperties[i-1].coords[0,1],RegionProperties[i-1].coords[0,0],
+             marker='o',linestyle='none',color=(1,0,0),label='Start')
+Axes.plot(RegionProperties[i-1].coords[-1,1],RegionProperties[i-1].coords[-1,0],
+             marker='o',linestyle='none',color=(0,1,0),label='Stop')
+Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.9,RegionProperties[i-1].coords[0,1]*1.1])
+Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.1,RegionProperties[i-1].coords[0,0]*0.8])
+plt.legend(loc='lower right')
+plt.show()
+
+
+FigPath = r'C:\Users\mathi\OneDrive\Documents\PhD\02_Meetings\03_MicroMeso\Pictures\StainingProtocol'
+plt.rcParams['font.size'] = '16'
+
+Figure, Axes = plt.subplots(1,1)
+Axes.plot(R[str(i)],color=(1,0,0))
+Axes.plot(G[str(i)],color=(0,1,0))
+Axes.plot(B[str(i)],color=(0,0,1))
+Axes.set_ylim([0,255])
+Axes.set_xticks([])
+plt.box(False)
+plt.savefig(FigPath + '\Signal1.png', transparent=True)
+plt.show()
+
+Figure, Axes = plt.subplots(1,1,figsize=(11.34,7.73))
+Axes.imshow(P1_Array)
+# Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
+Axes.plot(RegionProperties[i-1].coords[0,1],RegionProperties[i-1].coords[0,0],
+             marker='o',linestyle='none',color=(0,0,0),label='Start')
+Axes.plot(RegionProperties[i-1].coords[-1,1],RegionProperties[i-1].coords[-1,0],
+             marker='o',linestyle='none',color=(0,0,0),label='Stop')
+Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.8,RegionProperties[i-1].coords[0,1]*1.15])
+Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.2,0])
+# plt.legend(loc='lower right')
+plt.subplots_adjust(0,0,1,1)
+plt.axis('off')
+plt.show()
