@@ -2,8 +2,11 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from skimage import morphology, measure
+from mpl_toolkits.mplot3d import Axes3D
+from skimage import morphology, measure, exposure
 import pandas as pd
+# import statsmodels.stats.api as st
+
 
 
 def RGBThreshold(RGBArray, Threshold):
@@ -196,6 +199,65 @@ for i in [5,10,15]:
     # Axes.axis('off')
     plt.show()
 
+    # Compute Euclidian distance between mean vectors
+    MV1 = F_V1.mean()
+    MV2 = F_V2.mean()
+    MV1_B = F_V1_B.mean()
+    MV2_B = F_V2_B.mean()
+
+    D1 = np.linalg.norm(MV1 - MV1_B)
+    D2 = np.linalg.norm(MV2 - MV2_B)
+
+    Figure, Axes = plt.subplots(1, 1, subplot_kw=dict(projection='3d'))
+    Axes.plot([MV1[0], MV1_B[0]],
+              [MV1[1], MV1_B[1]],
+              [MV1[2], MV1_B[2]], color=(0,0,1), marker='o', label='Protocol 1')
+    Axes.plot([MV2[0], MV2_B[0]],
+              [MV2[1], MV2_B[1]],
+              [MV2[2], MV2_B[2]], color=(1,0,0), marker='o', label='Protocol 2')
+    Axes.set_xlim([80, 130])
+    Axes.set_ylim([80, 130])
+    Axes.set_zlim([160-15, 180+15])
+    Axes.set_xlabel('R')
+    Axes.set_ylabel('G')
+    Axes.set_zlabel('B')
+    # Axes.set_zticks([160,170,180])
+    plt.legend()
+    plt.show()
+
+    # Statistical analysis
+    V1_MC, V2_MC = {}, {}
+    for Channel in ['R','G','B']:
+        MC = st.CompareMeans(st.DescrStatsW(F_V1_B[Channel]),st.DescrStatsW(F_V1[Channel]))
+        V1_MC[Channel] = MC.tconfint_diff(alpha=0.5)
+        MC = st.CompareMeans(st.DescrStatsW(F_V2_B[Channel]),st.DescrStatsW(F_V2[Channel]))
+        V2_MC[Channel] = MC.tconfint_diff(alpha=0.5)
+
+    Pos = np.repeat(np.arange(1,4),2)
+    Delta = 0.1
+    Figure, Axes = plt.subplots(1,1,figsize=(5,6))
+    Axes.plot(Pos[:2] - Delta, V1_MC['R'], color=(0, 0, 1), linewidth=2)
+    Axes.plot(Pos[0] - Delta, np.mean(V1_MC['R']), color=(0, 0, 1), marker='o', markersize=5)
+    Axes.plot(Pos[2:4] - Delta, V1_MC['G'], color=(0, 0, 1), linewidth=2)
+    Axes.plot(Pos[2] - Delta, np.mean(V1_MC['G']), color=(0, 0, 1), marker='o', markersize=5)
+    Axes.plot(Pos[4:] - Delta, V1_MC['B'], color=(0, 0, 1), linewidth=2)
+    Axes.plot(Pos[4] - Delta, np.mean(V1_MC['B']), color=(0, 0, 1), marker='o', markersize=5)
+    Axes.plot(Pos[:2] + Delta, V2_MC['R'], color=(1, 0, 0), linewidth=2)
+    Axes.plot(Pos[0] + Delta, np.mean(V2_MC['R']), color=(1, 0, 0), marker='o', markersize=5)
+    Axes.plot(Pos[2:4] + Delta, V2_MC['G'], color=(1, 0, 0), linewidth=2)
+    Axes.plot(Pos[2] + Delta, np.mean(V2_MC['G']), color=(1, 0, 0), marker='o', markersize=5)
+    Axes.plot(Pos[4:] + Delta, V2_MC['B'], color=(1, 0, 0), linewidth=2)
+    Axes.plot(Pos[4] + Delta, np.mean(V2_MC['B']), color=(1, 0, 0), marker='o', markersize=5)
+    Axes.plot([], color=(0, 0, 1), linewidth=2, marker='o', markersize=5, label='Protocol 1')
+    Axes.plot([], color=(1, 0, 0), linewidth=2, marker='o', markersize=5, label='Protocol 2')
+    Axes.set_xticks([1,2,3],['R','G','B'])
+    Axes.set_xlim([0.4,3.6])
+    plt.legend(loc='upper center',bbox_to_anchor=(0.5,1.25),ncol=1, frameon=False)
+    plt.subplots_adjust(0.2,0.1,0.8,0.8)
+    plt.show()
+
+
+
 
 # Signal analysis
 C1 = sitk.ReadImage(ImageDirectory + 'Stained1_Signal.png')
@@ -213,16 +275,16 @@ RegionProperties = measure.regionprops(C1_Labels)
 
 R, G, B = {}, {}, {}
 for Region in RegionProperties:
-    R[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],0]
-    G[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],1]
-    B[str(Region.label)] = P2_Array[Region.coords[:,0],Region.coords[:,1],2]
+    R[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],0]
+    G[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],1]
+    B[str(Region.label)] = P1_Array[Region.coords[:,0],Region.coords[:,1],2]
 
-# R_P2 = R
-# G_P2 = G
-# B_P2 = B
+R_P1 = R
+G_P1 = G
+B_P1 = B
 
 
-i = 5
+i = 4
 Figure, Axes = plt.subplots(1,1)
 Axes.imshow(P2_Array)
 Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
@@ -241,27 +303,27 @@ FigPath = FigPath / '02_Meetings/03_MicroMeso/Pictures/StainingProtocol'
 plt.rcParams['font.size'] = '16'
 
 Figure, Axes = plt.subplots(1,1)
-Axes.plot(R[str(i)][::-10],color=(1,0,0))
-Axes.plot(G[str(i)][::-10],color=(0,1,0))
-Axes.plot(B[str(i)][::-10],color=(0,0,1))
-Axes.plot(R_P1[str(i)][::-10],color=(1,0,0),linestyle='--')
-Axes.plot(G_P1[str(i)][::-10],color=(0,1,0),linestyle='--')
-Axes.plot(B_P1[str(i)][::-10],color=(0,0,1),linestyle='--')
+Axes.plot(R[str(i)][::-1],color=(1,0,0))
+Axes.plot(G[str(i)][::-1],color=(0,1,0))
+Axes.plot(B[str(i)][::-1],color=(0,0,1))
+# Axes.plot(R_P1[str(i)][::-10],color=(1,0,0),linestyle='--')
+# Axes.plot(G_P1[str(i)][::-10],color=(0,1,0),linestyle='--')
+# Axes.plot(B_P1[str(i)][::-10],color=(0,0,1),linestyle='--')
 Axes.set_ylim([0,255])
 Axes.set_xticks([])
 plt.box(False)
-# plt.savefig(FigPath / str('Signal' + str(i) + '.png'), transparent=True)
+plt.savefig(FigPath / str('Signal' + str(i) + '_P2.png'), transparent=True)
 plt.show()
 
-Figure, Axes = plt.subplots(1,1,figsize=(5.32,4.72))
-Axes.imshow(P1_Array)
+Figure, Axes = plt.subplots(1,1,figsize=(12.69,10.26))
+Axes.imshow(P2_Array)
 # Axes.plot(RegionProperties[i-1].coords[:,1],RegionProperties[i-1].coords[:,0],color=(0,0,0))
 Axes.plot(RegionProperties[i-1].coords[0,1],RegionProperties[i-1].coords[0,0],
              marker='o',linestyle='none',color=(0,0,0),label='Start')
 Axes.plot(RegionProperties[i-1].coords[-1,1],RegionProperties[i-1].coords[-1,0],
              marker='o',linestyle='none',color=(0,0,0),label='Stop')
-Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.8,RegionProperties[i-1].coords[0,1]*1.2])
-Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.025,RegionProperties[i-1].coords[0,0]*0.975])
+Axes.set_xlim([RegionProperties[i-1].coords[-1,1]*0.7,RegionProperties[i-1].coords[0,1]*1.3])
+Axes.set_ylim([RegionProperties[i-1].coords[-1,0]*1.05,RegionProperties[i-1].coords[0,0]*0.95])
 # plt.legend(loc='lower right')
 plt.subplots_adjust(0,0,1,1)
 plt.axis('off')
@@ -280,11 +342,13 @@ for i in range(1,6):
     C_P2[str(i)] = B_P2[str(i)] - RG_P2[str(i)]
 
 Figure, Axes = plt.subplots(1,1)
-Axes.plot(C_P1[str(i)][::-1],color=(1,0,0),label='Protocol 1')
-Axes.plot(C_P2[str(i)][::-1],color=(0,0,1),label='Protocol 1')
-Axes.set_ylim([0,255])
-# Axes.set_xticks([])
-# plt.box(False)
-# plt.savefig(FigPath / str('Signal' + str(i) + '.png'), transparent=True)
+Axes.plot(C_P1[str(i)][::-1]/max(C_P1[str(i)]),color=(0,0,0),label='Protocol 1')
+# Axes.plot(C_P2[str(i)][::-1]/max(C_P2[str(i)]),color=(0,0,0),label='Protocol 2')
+Axes.set_ylim([0,1])
+# Axes.set_yscale('log')
+Axes.set_xticks([])
+plt.box(False)
+plt.savefig(FigPath / str('Signal' + str(i-1) + '_Diff_P1.png'), transparent=True)
+# plt.legend()
 plt.show()
 
