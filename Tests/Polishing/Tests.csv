@@ -1,0 +1,31 @@
+Polishing Paper,Test Run,Samples,Side,Holder,Position,Initial Max Thickness [um],Test time [min],Rotation velocity [rpm],Final Max Thickness [um],Remarks
+600p 1200,1,437 L,Medial,A,A,260,1,20,230,Time not exact
+600p 1200,1,437 L,Lateral,B,B,250,1,20,235,Time not exact
+600p 1200,1,391 L,Medial,C,C,560,1,20,530,Time not exact
+600p 1200,1,391 L,Lateral,D,D,420,1,20,415,Time not exact
+600p 1200,1,391 R,Medial,E,E,400,1,20,350,Time not exact
+600p 1200,1,391 R,Lateral,F,F,370,1,20,310,Time not exact
+600p 1200,2,437 L,Medial,A,A,230,1,20,230,
+600p 1200,2,437 L,Lateral,B,B,235,1,20,220,
+600p 1200,2,391 L,Medial,C,C,530,1,20,530,
+600p 1200,2,391 L,Lateral,D,D,415,1,20,410,
+600p 1200,2,391 R,Medial,E,E,350,1,20,320,
+600p 1200,2,391 R,Lateral,F,F,310,1,20,300,
+600p 1200,3,437 L,Medial,A,A,230,2,20,200,Ready for polishing 1
+600p 1200,3,437 L,Lateral,B,B,220,2,20,190,Ready for polishing 1
+600p 1200,3,391 L,Medial,C,C,530,2,20,510,
+600p 1200,3,391 L,Lateral,D,D,410,2,20,390,
+600p 1200,3,391 R,Medial,E,E,320,2,20,300,
+600p 1200,3,391 R,Lateral,F,F,300,2,20,,Sample destroyed
+600p 1200,4,437 L,Medial,A,,,,,,
+600p 1200,4,437 L,Lateral,B,,,,,,
+600p 1200,4,391 L,Medial,C,C,510,3,40,490,
+600p 1200,4,391 L,Lateral,D,A,390,3,40,380,
+600p 1200,4,391 R,Medial,E,E,300,3,40,260,
+600p 1200,4,391 R,Lateral,F,,,,,,
+600p 1200,5,437 L,Medial,A,,,,,,
+600p 1200,5,437 L,Lateral,B,,,,,,
+600p 1200,5,391 L,Medial,C,C,490,5,20,480,
+600p 1200,5,391 L,Lateral,D,A,380,5,20,360,
+600p 1200,5,391 R,Medial,E,E,260,5,20,240,
+600p 1200,5,391 R,Lateral,F,,,,,,
