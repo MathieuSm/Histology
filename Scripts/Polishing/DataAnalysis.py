@@ -61,9 +61,49 @@ Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
 plt.legend(ncol=2)
 plt.show()
 
+Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
+i = 0
+for Sample in Samples:
+    for Side in Sides:
+        Filter1 = Data['Samples'] == Sample
+        Filter2 = Data['Side'] == Side
+        FilteredData = Data[Filter1 & Filter2]
+        Axes.plot(np.log(FilteredData['Total Distance [rev]']), np.log(FilteredData['Grinding ratio [um/rev]']+1),
+                  color=Colors[i], label=Sample + ' ' + Side)
+        i += 1
+Axes.set_xlabel('Cumulative distance [rev]')
+Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
+plt.legend(ncol=2)
+plt.show()
 
 
-Healthy_LMM = smf.mixedlm("LogSxy ~ Sii + Sij + Sjj + LogBVTV + Logmxy - 1",
-                         data=HealthySystem, groups=HealthySystem['Scan'],
+# Transform data for linear relationships
+Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
+i = 0
+for Sample in Samples:
+    for Side in Sides:
+        Filter1 = Data['Samples'] == Sample
+        Filter2 = Data['Side'] == Side
+        FilteredData = Data[Filter1 & Filter2]
+        Axes.plot(np.log(FilteredData['Total Distance [rev]']), np.log(FilteredData['Grinding ratio [um/rev]']+1),
+                  color=Colors[i], label=Sample + ' ' + Side)
+        i += 1
+Axes.set_xlabel('Cumulative distance [rev]')
+Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
+plt.legend(ncol=2)
+plt.show()
+
+Data['LogD'] = np.log(Data['Total Distance [rev]'])
+Data['LogG'] = np.log(Data['Grinding ratio [um/rev]']+1)
+
+LM_Data = pd.DataFrame(Data.dropna(subset='LogG'))
+LM_Data['Groups'] = LM_Data['Samples'] + ' ' + LM_Data['Side']
+
+
+
+LMM = smf.mixedlm('LogG ~ LogD', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
+
+Healthy_LMM = smf.mixedlm("Grinding ratio [um/rev] ~ exp(-Total Distance [rev])",
+                         data=Data, groups=Data[['Samples','Side']],
                          vc_formula={"IF": "IF-1"}).fit(reml=True)
 
