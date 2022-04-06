@@ -24,6 +24,7 @@
 *.tiff
 *.TIF
 *.JPG
+*.nd2
 
 # Ignore auxiliary tex files
 *.aux
