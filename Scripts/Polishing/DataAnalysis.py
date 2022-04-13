@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
-
+import sympy as sp
 
 desired_width = 320
 pd.set_option('display.width', desired_width)
@@ -16,23 +16,22 @@ CurrentDirectory = Path.cwd()
 DataPath = CurrentDirectory / 'Tests/Polishing/Tests.csv'
 Data = pd.read_csv(DataPath)
 
+
 # Compute delta at each run
 Data['Delta [um]'] = Data['Initial Max Thickness [um]'] - Data['Final Max Thickness [um]']
 
 # Generate variable for per sample plot
-Samples = Data['Samples'].unique()
-Sides = Data['Side'].unique()
+Data['Groups'] = Data['Samples'] + ' ' + Data['Side']
+Groups = Data['Groups'].unique()
 Colors = [(0,0,0),(1,0,0),(1,0,1),(0,0,1),(0,1,1),(0,1,0)]
 
 Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
 i = 0
-for Sample in Samples:
-    for Side in Sides:
-        Filter1 = Data['Samples'] == Sample
-        Filter2 = Data['Side'] == Side
-        FilteredData = Data[Filter1 & Filter2]
+for Group in Groups:
+        Filter = Data['Groups'] == Group
+        FilteredData = Data[Filter]
         Axes.plot(FilteredData['Test Run'], FilteredData['Delta [um]'],
-                  color=Colors[i], label=Sample + ' ' + Side)
+                  color=Colors[i], label=Group)
         i += 1
 Axes.set_xticks([1,2,3,4,5])
 Axes.set_xlabel('Test Run n° [-]')
@@ -43,88 +42,49 @@ plt.show()
 
 # Compute additional data
 Data['Distance [rev]'] = Data['Test time [min]'] * Data['Rotation velocity [rpm]']
-Data['Grinding ratio [um/rev]'] = Data['Delta [um]'] / Data['Distance [rev]']
-Filter1 = Data['Samples'] == '391 L'
-Filter2 = Data['Side'] == 'Lateral'
-Data['Total Distance [rev]'] = np.repeat(Data[Filter1 & Filter2]['Distance [rev]'].cumsum().values,6)
+Data['Total Distance [rev]'] = Data.groupby('Groups')['Distance [rev]'].cumsum()
+Data['Total Grinding [um]'] = Data.groupby('Groups')['Delta [um]'].cumsum()
 
 Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
 i = 0
-for Sample in Samples:
-    for Side in Sides:
-        Filter1 = Data['Samples'] == Sample
-        Filter2 = Data['Side'] == Side
-        FilteredData = Data[Filter1 & Filter2]
-        Axes.plot(FilteredData['Total Distance [rev]'], FilteredData['Grinding ratio [um/rev]'],
-                  color=Colors[i], label=Sample + ' ' + Side)
-        i += 1
-Axes.set_xlabel('Cumulative distance [rev]')
-Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
-plt.legend(ncol=2)
-plt.show()
-
-Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
-i = 0
-for Sample in Samples:
-    for Side in Sides:
-        Filter1 = Data['Samples'] == Sample
-        Filter2 = Data['Side'] == Side
-        FilteredData = Data[Filter1 & Filter2]
-        Axes.plot(np.log(FilteredData['Total Distance [rev]']), np.log(FilteredData['Grinding ratio [um/rev]']+1),
-                  color=Colors[i], label=Sample + ' ' + Side)
-        i += 1
-Axes.set_xlabel('Cumulative distance [rev]')
-Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
-plt.legend(ncol=2)
+for Group in Groups:
+    Filter = Data['Groups'] == Group
+    FilteredData = Data[Filter]
+    Axes.plot(FilteredData['Total Distance [rev]'], FilteredData['Total Grinding [um]'],
+              color=Colors[i], label=Group)
+    i += 1
+Axes.set_xlabel('Cumulative Distance [rev]')
+Axes.set_ylabel('Cumulative Grinding [$\mu$m]')
+Axes.set_xlim([0, Data['Total Distance [rev]'].max() * 1.05])
+Axes.set_ylim([0,Data['Total Grinding [um]'].max()+40])
+plt.legend(ncol=2,frameon=False)
 plt.show()
 
 
-# Transform data for linear relationships
-Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
-i = 0
-for Sample in Samples:
-    for Side in Sides:
-        Filter1 = Data['Samples'] == Sample
-        Filter2 = Data['Side'] == Side
-        FilteredData = Data[Filter1 & Filter2]
-        Axes.plot(np.log(FilteredData['Total Distance [rev]']), np.log(FilteredData['Grinding ratio [um/rev]']+1),
-                  color=Colors[i], label=Sample + ' ' + Side)
-        i += 1
-Axes.set_xlabel('Cumulative distance [rev]')
-Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
-plt.legend(ncol=2)
-plt.show()
+# Fit
+LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
+LM_Data['x'] = np.log(LM_Data['Total Distance [rev]'])
+LM_Data['y'] = LM_Data['Total Grinding [um]']
 
-Data['LogD'] = np.log(Data['Total Distance [rev]'])
-Data['LogG'] = np.log(Data['Grinding ratio [um/rev]']+1)
-
-LM_Data = pd.DataFrame(Data.dropna(subset='LogG'))
-LM_Data['Groups'] = LM_Data['Samples'] + ' ' + LM_Data['Side']
-LM_Data['y'] = LM_Data['Grinding ratio [um/rev]']
-LM_Data['x'] = 1/LM_Data['Total Distance [rev]']
-
-
-LMM = smf.mixedlm('y ~ x - 1', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
-
-
+LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
 def PlotRegressionResults(Model, Data, Alpha=0.95):
 
     ## Get data from the model
     Y_Obs = Model.model.endog
     N = int(Model.nobs)
     C = np.matrix(Model.cov_params())
-    X = 1 / np.matrix(Model.model.exog)
+    X = np.matrix(Model.model.exog)
 
-    X_Pred = np.matrix(np.linspace(X.min(),X.max())).T
-    Y_Fit = Model.predict(1/X_Pred, transform=False)
-
+    X_Pred = np.matrix(np.ones((50,2)))
+    X_Pred[:,1] = np.matrix(np.linspace(X.min(),X.max(),50)).T
+    Y_Fit = Model.predict(X_Pred, transform=False)
 
     if not C.shape[0] == X.shape[1]:
         C = C[:-1,:-1]
 
 
     ## Compute R2 and standard error of the estimate
-    E = Y_Obs - Y_Fit
+    E = Y_Obs - Model.predict()
     RSS = np.sum(E ** 2)
     SE = np.sqrt(RSS / Model.df_resid)
     TSS = np.sum((Model.model.endog - Model.model.endog.mean()) ** 2)
@@ -138,24 +98,50 @@ def PlotRegressionResults(Model, Data, Alpha=0.95):
 
     ## Plot
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5 * 1.5, 4.5 * 1.5))
-    Data.groupby('Groups').plot(x='Total Distance [rev]',y='Grinding ratio [um/rev]', label='_nolegend_',
+    Data.groupby('Groups').plot(x='Total Distance [rev]',y='Total Grinding [um]', label='_nolegend_',
                                 ax=Axes, color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none')
     Axes.plot([], color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none', label='Data')
-    Axes.plot(X_Pred, Y_Fit, color=(1, 0, 0), linestyle='--', label='Fit')
+    Axes.plot(np.exp(X_Pred[:,1]), Y_Fit, color=(1, 0, 0), linestyle='--', label='Fit')
     # Axes.fill_between(np.linspace(X.min(),X.max()), CI_Line_u, CI_Line_o, color=(0, 0, 0, 0.1), label='95% CI')
     Axes.set_xlabel('Cumulative distance [rev]')
-    Axes.set_ylabel('Grinding ratio [$\mu$m / rev]')
-    Axes.annotate(r'N Groups : ' + str(len(Data.groupby('Groups'))), xy=(0.525, 0.925), xycoords='axes fraction')
-    Axes.annotate(r'N Points : ' + str(N), xy=(0.525, 0.86), xycoords='axes fraction')
-    Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.8, 0.75), xycoords='axes fraction')
-    Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.8, 0.685), xycoords='axes fraction')
-    plt.legend(ncol=1)
+    Axes.set_ylabel('Cumulative grinding [$\mu$m]')
+    Axes.annotate(r'N Groups : ' + str(len(Data.groupby('Groups'))), xy=(0.25, 0.925), xycoords='axes fraction')
+    Axes.annotate(r'N Points : ' + str(N), xy=(0.25, 0.86), xycoords='axes fraction')
+    Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.05, 0.75), xycoords='axes fraction')
+    Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.05, 0.685), xycoords='axes fraction')
+    Axes.set_xlim([0, np.exp(X.max())*1.05])
+    Axes.set_ylim([0, max(Y_Obs.max(),Y_Fit.max())+40])
+    plt.legend(ncol=1, loc='upper left')
     plt.show()
 
     return R2, SE
+PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
 
+# Build function to estimate time
+x = sp.symbols('x')
+TotalGrinding = LMM.params['Intercept'] + LMM.params['x'] * x
+Fx = sp.lambdify(x, TotalGrinding, 'numpy')
 
-Healthy_LMM = smf.mixedlm("Grinding ratio [um/rev] ~ exp(-Total Distance [rev])",
-                         data=Data, groups=Data[['Samples','Side']],
-                         vc_formula={"IF": "IF-1"}).fit(reml=True)
+# Compute distance
+MinThickness = 200
+Thickness2Grind = Data.groupby('Groups')['Final Max Thickness [um]'].min() - MinThickness
+
+ActualDistance = np.log(Data['Total Distance [rev]'].max())
+Distance2Grind = LMM.params['Intercept'] + LMM.params['x'] * (x-ActualDistance)
+
+## Rotation velocity [rev/min]
+Rv = 50
+GrindingTimes = pd.DataFrame()
+Distances2Grind = pd.DataFrame()
+FinalThickness = pd.DataFrame()
+for Number, Thickness in enumerate(Thickness2Grind):
+    if Thickness > 0:
+        Sample = Thickness2Grind.keys()[Number]
+        DataFrame = pd.DataFrame([sp.solve(Distance2Grind-Thickness)],index=[Sample])
+        Distances2Grind = pd.concat([Distances2Grind,DataFrame])
+        ActualThickness = Thickness2Grind[Sample]
+        GrindingTimes = pd.concat([GrindingTimes,DataFrame / Rv])
+        FinalThickness = pd.concat([FinalThickness,ActualThickness - DataFrame])
+
+## Verify that sp.solve give the value that we want
 
