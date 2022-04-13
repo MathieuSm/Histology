@@ -121,27 +121,55 @@ PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
 x = sp.symbols('x')
 TotalGrinding = LMM.params['Intercept'] + LMM.params['x'] * x
 Fx = sp.lambdify(x, TotalGrinding, 'numpy')
+Distances = np.arange(1E0,1E4)
+GrindingProfile = Fx(np.log(Distances))
+
+Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
+Axes.plot(GrindingProfile)
+Axes.set_xlabel('Cumulative Distance [rev]')
+Axes.set_ylabel('Cumulative Grinding [$\mu$m]')
+plt.show()
 
 # Compute distance
 MinThickness = 200
-Thickness2Grind = Data.groupby('Groups')['Final Max Thickness [um]'].min() - MinThickness
+R_Data = pd.DataFrame(LM_Data[LM_Data['Test Run'] == 5])
+R_Data['Thickness2Grind'] = R_Data['Final Max Thickness [um]'] - MinThickness
 
-ActualDistance = np.log(Data['Total Distance [rev]'].max())
-Distance2Grind = LMM.params['Intercept'] + LMM.params['x'] * (x-ActualDistance)
+ActualDistance = Data['Total Distance [rev]'].max()
+ActualDistances = Distances[Distances >= ActualDistance]
+ActualProfile = GrindingProfile[Distances >= ActualDistance]
+
+# Set profile and distance to 0
+ActualDistances = ActualDistances - ActualDistances.min()
+ActualProfile = ActualProfile - ActualProfile.min()
+
+
+# Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
+# Axes.plot(ActualDistances,ActualProfile)
+# Axes.set_xlabel('Cumulative Distance [rev]')
+# Axes.set_ylabel('Cumulative Grinding [$\mu$m]')
+# plt.show()
 
 ## Rotation velocity [rev/min]
 Rv = 50
 GrindingTimes = pd.DataFrame()
 Distances2Grind = pd.DataFrame()
-FinalThickness = pd.DataFrame()
-for Number, Thickness in enumerate(Thickness2Grind):
-    if Thickness > 0:
-        Sample = Thickness2Grind.keys()[Number]
-        DataFrame = pd.DataFrame([sp.solve(Distance2Grind-Thickness)],index=[Sample])
-        Distances2Grind = pd.concat([Distances2Grind,DataFrame])
-        ActualThickness = Thickness2Grind[Sample]
-        GrindingTimes = pd.concat([GrindingTimes,DataFrame / Rv])
-        FinalThickness = pd.concat([FinalThickness,ActualThickness - DataFrame])
+for Index in R_Data.index:
+    Sample = R_Data.loc[Index,'Groups']
+    Thickness2Grind = R_Data.loc[Index,'Thickness2Grind']
+    Distance2Grind = ActualDistances[np.argmin(np.abs(ActualProfile - Thickness2Grind))]
+    DataFrame = pd.DataFrame([Distance2Grind],index=[Sample])
+    Distances2Grind = pd.concat([Distances2Grind,DataFrame])
+    GrindingTimes = pd.concat([GrindingTimes,DataFrame / Rv])
 
-## Verify that sp.solve give the value that we want
+
+Time = 22
+FinalThickness = pd.DataFrame()
+for Index in R_Data.index:
+    Sample = R_Data.loc[Index,'Groups']
+    Thickness2Grind = R_Data.loc[Index,'Thickness2Grind']
+    DistanceGrounded = Time * Rv
+    ThicknessGrounded = ActualProfile[np.argmin(np.abs(ActualDistances - DistanceGrounded))]
+    DataFrame = pd.DataFrame([Thickness2Grind + MinThickness - ThicknessGrounded],index=[Sample])
+    FinalThickness = pd.concat([FinalThickness, DataFrame])
 
