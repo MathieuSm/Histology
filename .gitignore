@@ -36,3 +36,6 @@
 *.blg
 *.gz
 *.log
+
+# Ignore manual of confocal microscope
+Tests/Calcein/Nikon/Docs/

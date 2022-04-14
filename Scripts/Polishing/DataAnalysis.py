@@ -60,13 +60,7 @@ Axes.set_ylim([0,Data['Total Grinding [um]'].max()+40])
 plt.legend(ncol=2,frameon=False)
 plt.show()
 
-
 # Fit
-LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
-LM_Data['x'] = np.log(LM_Data['Total Distance [rev]'])
-LM_Data['y'] = LM_Data['Total Grinding [um]']
-
-LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
 def PlotRegressionResults(Model, Data, Alpha=0.95):
 
     ## Get data from the model
@@ -115,6 +109,23 @@ def PlotRegressionResults(Model, Data, Alpha=0.95):
     plt.show()
 
     return R2, SE
+
+# Samples = ['391 R Medial', '391 L Medial', '391 L Lateral']
+#
+# for Sample in Samples:
+#     LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
+#     LM_Data['x'] = np.log(LM_Data['Total Distance [rev]'] - 1)
+#     LM_Data['y'] = LM_Data['Total Grinding [um]']
+#     LM_Data = LM_Data[LM_Data['Groups'] == Sample]
+#     LMM = smf.ols('y ~ x', data=LM_Data).fit(reml=True)
+#     # LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
+#     PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
+#     print(LMM.params)
+
+LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
+LM_Data['x'] = np.log(LM_Data['Total Distance [rev]'] - 1)
+LM_Data['y'] = LM_Data['Total Grinding [um]']
+LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
 PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
 
 # Build function to estimate time
