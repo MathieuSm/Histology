@@ -24,6 +24,14 @@ Description = """
     Date: January 2022
     """
 
+# For testing purposes
+# class Arguments:
+#     pass
+# Arguments.id = '/home/mathieu/Documents/PhD/08_uCT/'
+# Arguments.Neck = 'C0001094_reso_0.274_DOWNSCALED.mhd'
+# Arguments.Sample = 'C0002074.mhd'
+# Arguments.Angle = 60
+# Arguments.od = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
 
 def Main(Arguments, Neck=None, FigColor=(0.17, 0.18, 0.22)):
     print('\nStart sample alignment ...\n')
@@ -288,8 +296,12 @@ def Main(Arguments, Neck=None, FigColor=(0.17, 0.18, 0.22)):
         ErodedArray = morphology.binary_erosion(DilatedArray, Disk)
         UnPaddedArray = ErodedArray[Radius + 1:-Radius, Radius + 1:-Radius]
 
+        Coord = np.argwhere(Slice[Radius + 1:-Radius, Radius + 1:-Radius] == 1)
+        Cg = np.mean(Coord, axis=0)[::-1]
+
         # Figure, Axes = plt.subplots(1, 1, figsize=(4.5, 5.5), facecolor=FigColor)
         # Axes.imshow(Slice[Radius + 1:-Radius, Radius + 1:-Radius], cmap='bone')
+        # Axes.plot(Cg[0], Cg[1], marker='x', color=(0,1,0))
         # Axes.imshow(UnPaddedArray, cmap=ColorMap, alpha=0.5)
         # plt.show()
 
@@ -300,13 +312,43 @@ def Main(Arguments, Neck=None, FigColor=(0.17, 0.18, 0.22)):
         Y0, X0 = RegionProperties.centroid
         R1 = RegionProperties.major_axis_length * 0.5
         R2 = RegionProperties.minor_axis_length * 0.5
-        OrientationAngle = RegionProperties.orientation
+
+        OrientationVector = Cg - np.array([X0,Y0])
+        OrientationAngle = np.arctan(-OrientationVector[1]/OrientationVector[0])
 
         Radians = np.linspace(0, 2 * np.pi, 100)
-        Ellipse = np.array([R2 * np.cos(Radians), R1 * np.sin(Radians)])
+        Ellipse = np.array([R1 * np.cos(Radians), R2 * np.sin(Radians)])
         R = np.array([[np.cos(OrientationAngle), -np.sin(OrientationAngle)],
                       [np.sin(OrientationAngle), np.cos(OrientationAngle)]])
         Ellipse_R = np.dot(R, Ellipse)
+
+        # Rotate sample according to its main axis
+        RotationCenter = np.array(Image.shape) / 2
+        Transform = sitk.AffineTransform(2)
+        Transform.SetMatrix(R.ravel())
+        Transform.SetCenter(RotationCenter[::-1])
+        Transform.SetTranslation((0, 0, 0))
+
+        # Resample image
+        Resampler = sitk.ResampleImageFilter()
+        Resampler.SetReferenceImage(sitk.GetImageFromArray(Image))
+        Resampler.SetTransform(Transform.GetInverse())
+        R_Image = Resampler.Execute(sitk.GetImageFromArray(Image))
+        Image = sitk.GetArrayFromImage(R_Image)
+
+        # Figure, Axes = plt.subplots(1, 1, figsize=FigureSize, dpi=int(DPI), facecolor=FigColor)
+        # Axes.imshow(Image2, cmap='bone')
+        # Axes.plot(X0, Y0, marker='x', color=(0, 0, 1), linestyle='none', markersize=10, mew=2, label='Centroid')
+        # Axes.plot(X0 + Ellipse_R[0, :], Y0 - Ellipse_R[1, :], color=(0, 1, 0), label='Fitted ellipse')
+        # Axes.plot(X0 + X_Line, Y0 + Y_Line, color=(1, 0, 0))
+        # Axes.plot(X0 - X_Line, Y0 + Y_Line, color=(1, 0, 0))
+        # Axes.plot(X0 + X_Line, Y0 - Y_Line, color=(1, 0, 0))
+        # Axes.plot(X0 - X_Line, Y0 - Y_Line, color=(1, 0, 0), label='Cutting lines')
+        # Axes.set_xlim([0, R_Sample_Array.shape[2]])
+        # Axes.set_ylim([R_Sample_Array.shape[1], 0])
+        # Axes.axis('off')
+        # plt.subplots_adjust(RealMargins[0], RealMargins[1], RealMargins[2], RealMargins[3])
+        # plt.show()
 
         # Compute cutting lines
         print('Plot cutting lines ...')

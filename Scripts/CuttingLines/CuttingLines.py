@@ -51,7 +51,9 @@ if __name__ == '__main__':
 
     # Define paths
     InputDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD\08_uCT'
+    InputDirectory = r'/home/mathieu/Documents/PhD/08_uCT/'
     OutputDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD\06_Histology\Cutting Lines'
+    OutputDirectory = r'/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
     Parser.add_argument('-id', help='Set input directory', type=str, default=InputDirectory)
     Parser.add_argument('-od', help='Set output directory', type=str, default=OutputDirectory)
 

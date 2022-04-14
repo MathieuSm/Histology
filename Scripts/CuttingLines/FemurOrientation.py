@@ -26,6 +26,12 @@ Description = """
     Date: January 2022
     """
 
+# For testing purposes
+# class Arguments:
+#     pass
+# Arguments.id = '/home/mathieu/Documents/PhD/08_uCT/'
+# Arguments.Proximal = 'C0001094_reso_0.274_DOWNSCALED.mhd'
+# Arguments.od = '/home/mathieu/Documents/PhD/06_Histology/Cutting Lines/'
 
 def Main(Arguments, FigColor=(0.17, 0.18, 0.22)):
     print('\nStart femur orientation ...\n')
