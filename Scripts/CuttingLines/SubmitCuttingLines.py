@@ -2,7 +2,7 @@
 
 import os
 
-os.system('python CuttingLines.py C0001750_reso_0.274_DOWNSCALED.mhd C0002074.mhd')
+os.system('python DrawCuttingLines.py C0002074.mhd')
 # os.system('python CuttingLines.py C0001830_reso_0.274_DOWNSCALED.mhd C0002076.mhd')
 # os.system('python CuttingLines.py C0001753_reso_0.274_DOWNSCALED.mhd C0002077.mhd')
 # os.system('python CuttingLines.py C0001752_reso_0.274_DOWNSCALED.mhd C0002079.mhd')
