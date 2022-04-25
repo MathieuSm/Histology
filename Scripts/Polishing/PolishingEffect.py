@@ -257,12 +257,11 @@ plt.show()
 # Save figures with scalebar
 Size = np.array(Crop[:,1] - Crop[:,0]) / 100
 DPI = 96
-Inch = 25.4
-PixelSize = Inch / DPI
+Calibration = 0.0013
 # ScaleBar parameters
 SB_Length = 2
 SB_Start = 100
-SB_X = [SB_Start, SB_Start + SB_Length / PixelSize * Inch]
+SB_X = [SB_Start, SB_Start + SB_Length / Calibration]
 
 
 plt.rcParams['font.size'] = '24'
