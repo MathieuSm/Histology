@@ -1,0 +1,158 @@
+\documentclass[12pt]{article}
+\usepackage[english]{babel}
+\usepackage{fancyhdr}              			
+\usepackage{array}
+\usepackage{geometry}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{enumitem}		
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{subcaption}
+\usepackage{booktabs}
+
+
+%-------------------------------------------------------------------------------
+% GENERAL
+%-------------------------------------------------------------------------------
+
+ \geometry{
+ a4paper,
+ total={170mm,257mm},
+ left=20mm,
+ top=20mm,
+ }
+ 
+\setlength\parindent{0pt}
+\setlength\parskip{1em}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    filecolor=black,      
+    urlcolor=blue,
+    citecolor=red
+}
+
+ \makeatletter
+ \newcount\here@undef
+\newcommand{\here}[1]{%
+  \@ifundefined{here@#1@undef}{}{\advance\here@undef by -1}%
+  \@namedef{here@#1}{}}
+\newcommand{\where}[1]{%
+  \@ifundefined{here@#1}{%
+    below%
+    \@ifundefined{here@#1@undef}{%
+      \@namedef{here@#1@undef}{}%
+      \advance\here@undef by 1
+    }{}%
+  }{%
+    above%
+  }%
+}
+
+\setcounter{tocdepth}{2}
+\titlespacing\subsubsection{0pt}{0pt}{-10pt}
+
+
+%-------------------------------------------------------------------------------
+% NUMBERING TYPE
+%-------------------------------------------------------------------------------
+
+\def\frontmatter{%
+	\pagenumbering{roman}
+	\setcounter{page}{1}
+	\renewcommand{\thesection}{\Roman{section}}
+}%
+
+\def\mainmatter{%
+    \pagenumbering{arabic}
+    \setcounter{page}{1}
+    \setcounter{section}{0}
+    \renewcommand{\thesection}{\arabic{section}}
+}%
+
+%-------------------------------------------------------------------------------
+% FIRST PAGE
+%-------------------------------------------------------------------------------
+
+\include{00_FirstPage}
+
+%-------------------------------------------------------------------------------
+% SPECIFICITY
+%-------------------------------------------------------------------------------
+
+\begin{document}
+	
+\frontmatter    								% On définit le type de pagination
+
+\maketitle       								% On crée la page de garde
+
+\thispagestyle{firstpage}						% On définit le style de la page de garde
+
+%-------------------------------------------------------------------------------
+% HEADER & FOOTER FOR BODY
+%-------------------------------------------------------------------------------
+
+\newgeometry{bottom=2.5cm, top=3cm, left=2cm, right=2.5cm}
+
+\pagestyle{fancy}
+\fancyhead[L]{Leica Microscope - Image Acquisition}
+\fancyhead[R]{ARTORG Center - MSB}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}			% Default \headrulewidth is 0.4pt
+\renewcommand{\footrulewidth}{0.4pt}			% Default \footrulewidth is 0.4pt
+
+
+%-------------------------------------------------------------------------------
+% DOCUMENT BODY
+%-------------------------------------------------------------------------------
+
+\mainmatter 								% Numerotation arabe pour le texte principal
+
+\section{Starting}
+First, ensure that microscope and the screen power supply are plugged in. Then, turn the microscope and the screen on. To set up the microscope itself, please refer to the manual.
+
+\section{Camera Overview}
+
+\begin{enumerate}
+	\item Black button:
+	\begin{itemize}
+		\item 1 second pressure: Page through illumination settings
+		\item 5 seconds pressure: Switch mode between HD mode and PC mode
+	\end{itemize}
+
+	\item Red button (only active in HD mode):
+	\begin{itemize}
+		\item 1 second pressure: Capture image onto SD card
+		\item 5 seconds pressure: Set white balance (wait for beep)
+		\item 10 seconds pressure: Reset camera to factory settings (wait for second beep)
+	\end{itemize}
+
+	\item LED status indicator:
+	\begin{itemize}
+		\item Green: Ready for image capture
+		\item Red: Not ready for image capture (i.e. no SD card or card full)
+		\item Yellow: Initializing
+		\item Orange: Camera failure (restart or call for service) 
+	\end{itemize}
+
+	\item SD card slot
+\end{enumerate}
+
+\begin{figure}[h!]
+	\centering
+	\includegraphics[width=0.4\linewidth]{Pictures/Overview}
+	\caption{Overview of camera options. Source: camera manual}
+\end{figure}
+
+\newpage
+\section{Good Practice Example}
+
+
+%-------------------------------------------------------------------------------
+% END DOCUMENT
+%-------------------------------------------------------------------------------
+
+\end{document}

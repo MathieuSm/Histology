@@ -1,0 +1,65 @@
+%-------------------------------------------------------------------------------
+% FIRST PAGE SETTINGS
+%-------------------------------------------------------------------------------
+
+
+%-------------------------------------------------------------------------------
+% GEOMETRY
+%-------------------------------------------------------------------------------
+
+\geometry{
+a4paper,
+total={170mm,257mm},
+left=20mm,
+top=20mm,
+}
+
+
+\parindent=0em
+\pagestyle{fancy}
+
+\renewcommand{\headrulewidth}{0pt}
+\newcommand{\HRule}[1]{\rule{\linewidth}{#1}}
+
+
+%-------------------------------------------------------------------------------
+% FIRST PAGE ONLY
+%-------------------------------------------------------------------------------
+
+\fancyhead[L]{}   %Header de gauche
+\fancyhead[R]{}   %Header de droite
+
+\fancypagestyle{firstpage}{
+\rhead{\includegraphics[width = 35mm]{Pictures/Unibe_Logo.png}}\fancyfoot{}}
+
+
+%-------------------------------------------------------------------------------
+% TITLE
+%-------------------------------------------------------------------------------		}
+
+{\fontfamily{cmr}\selectfont
+\title{
+\textsc{}
+\\ [2.0cm] 
+\HRule{0.5pt} \\  \vspace{0.5cm}
+\LARGE
+\uppercase{Leica MD 500 Microscope \\ \vspace{1cm}
+\normalsize Image Acquisition} \\ \vspace{0.5cm}
+\HRule{2pt}
+\\ [2.5cm]
+\normalsize\today
+\vspace*{5\baselineskip}}
+}
+
+\date{}
+
+
+%-------------------------------------------------------------------------------
+% Author
+%-------------------------------------------------------------------------------
+
+{\fontfamily{rm}\selectfont
+\author{
+Mathieu Simon \\ 
+ARTORG Center - MSB \\
+University of Bern}}
