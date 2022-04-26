@@ -11,6 +11,7 @@ Files = [File for File in os.listdir(TestDirectory) if File.endswith('.tif')]
 Files.sort()
 
 File = Files[-2]
+File = Files[2]
 Image = sitk.ReadImage(str(TestDirectory / File))
 Array = sitk.GetArrayFromImage(Image)
 Shape = Array.shape

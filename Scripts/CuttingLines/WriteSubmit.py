@@ -1,31 +1,20 @@
 import os
-import pandas as pd
+from pathlib import Path
 
-MainDirectory = r'C:\Users\mathi\OneDrive\Documents\PhD'
-FileDirectory = os.path.join(MainDirectory, r'06_Histology\Scripts\CuttingLines')
+MainDirectory = Path.cwd()
+FilesDirectory = MainDirectory / '../08_uCT/Neck'
+ScriptsDirectory = MainDirectory / 'Scripts/CuttingLines'
 
-Data = pd.read_excel(os.path.join(MainDirectory,'Samples.xlsx'),engine='openpyxl')
-Data = Data.loc[Data['uCT Neck ID'].notna()]
+Files = [File for File in os.listdir(FilesDirectory) if File.endswith('.mhd')]
+Files.sort()
 
-Data2Analyze = pd.DataFrame()
-for Index in Data.index:
-    Proximal = Data.loc[Index,'uCT Proximal ID'] + '_reso_0.274_DOWNSCALED.mhd'
-    File = os.path.join(MainDirectory,'08_uCT\Proximal',Proximal)
-    if os.path.isfile(File):
-        Neck = Data.loc[Index,'uCT Neck ID'] + '.mhd'
-        Data2Append = {'Proximal':Proximal,'Neck':Neck}
-        Data2Analyze = Data2Analyze.append(Data2Append,ignore_index=True)
+SubmitFile = open(str(ScriptsDirectory / 'SubmitCuttingLines.py'),'w')
+Command = 'os.system(\'python  Scripts/CuttingLines/DrawCuttingLines.py '
 
-File = open(os.path.join(FileDirectory, 'SubmitCuttingLines.py'),'w')
-Command = 'os.system(\'python CuttingLines.py '
+SubmitFile.write('#!/usr/bin/env python3\n\nimport os\n\n')
 
-File.write('#!/usr/bin/env python3\n\nimport os\n\n')
+for File in Files:
+    Line = Command + File + '\')\n'
+    SubmitFile.write(Line)
 
-for Line in Data2Analyze.index:
-
-    LineData = Data2Analyze.loc[Line]
-    Parameters = LineData['Proximal'] + ' ' + LineData['Neck'] + '\')\n'
-
-    File.write(Command + Parameters)
-
-File.close()
+SubmitFile.close()

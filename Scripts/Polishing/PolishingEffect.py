@@ -259,24 +259,31 @@ Size = np.array(Crop[:,1] - Crop[:,0]) / 100
 DPI = 96
 Calibration = 0.0013
 # ScaleBar parameters
-SB_Length = 2
+SB_Length = 0.5
 SB_Start = 100
 SB_X = [SB_Start, SB_Start + SB_Length / Calibration]
 
 
-plt.rcParams['font.size'] = '24'
+plt.rcParams['font.size'] = '40'
+Text = str(SB_Length) + ' mm'
 
 Figure, Axes = plt.subplots(1,1,dpi=DPI, figsize=(Size[0],Size[1]))
 Axes.imshow(Registered2_Crop.astype('uint8'))
 Axes.plot(SB_X, [1100,1100], color=(1,0,0), linewidth=5)
-Axes.annotate(str(SB_Length) + ' mm', (SB_Start+20, 1075), color=(1,0,0))
-# Axes.axis('off')
-# plt.subplots_adjust(0,0,1,1)
-# plt.savefig(str(DataPath / 'Pictures' / 'P4000.png'),dpi=96)
+Axes.plot([SB_X[0],SB_X[0]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[1],SB_X[1]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.annotate(str(SB_Length) + ' mm', (SB_Start+len(Text)*15, 1075), color=(1,0,0))
+Axes.axis('off')
+plt.subplots_adjust(0,0,1,1)
+plt.savefig(str(DataPath / 'Pictures' / 'P4000.png'),dpi=96)
 plt.show()
 
 Figure, Axes = plt.subplots(1,1,dpi=DPI, figsize=(Size[0],Size[1]))
 Axes.imshow(Registered_Crop.astype('uint8'))
+Axes.plot(SB_X, [1100,1100], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[0],SB_X[0]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[1],SB_X[1]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.annotate(str(SB_Length) + ' mm', (SB_Start+len(Text)*15, 1075), color=(1,0,0))
 Axes.axis('off')
 plt.subplots_adjust(0,0,1,1)
 plt.savefig(str(DataPath / 'Pictures' / 'P2400.png'),dpi=96)
@@ -284,6 +291,10 @@ plt.show()
 
 Figure, Axes = plt.subplots(1,1,dpi=DPI, figsize=(Size[0],Size[1]))
 Axes.imshow(P1200_Array_Crop.astype('uint8'))
+Axes.plot(SB_X, [1100,1100], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[0],SB_X[0]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[1],SB_X[1]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.annotate(str(SB_Length) + ' mm', (SB_Start+len(Text)*15, 1075), color=(1,0,0))
 Axes.axis('off')
 plt.subplots_adjust(0,0,1,1)
 plt.savefig(str(DataPath / 'Pictures' / 'P1200.png'),dpi=96)
@@ -293,6 +304,10 @@ Rescale = exposure.adjust_gamma(P1200_Array_Crop,gamma=0.6,gain=1)
 
 Figure, Axes = plt.subplots(1,1,dpi=DPI, figsize=(Size[0],Size[1]))
 Axes.imshow(Rescale.astype('uint8'))
+Axes.plot(SB_X, [1100,1100], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[0],SB_X[0]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.plot([SB_X[1],SB_X[1]], [1075,1125], color=(1,0,0), linewidth=5)
+Axes.annotate(str(SB_Length) + ' mm', (SB_Start+len(Text)*15, 1075), color=(1,0,0))
 Axes.axis('off')
 plt.subplots_adjust(0,0,1,1)
 plt.savefig(str(DataPath / 'Pictures' / 'P1200.png'),dpi=96)
