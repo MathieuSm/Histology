@@ -2,7 +2,7 @@
 Code for testing PCNN-PSO-AT with different inputs or fitness function
 """
 
-import os
+from pathlib import Path
 import time
 
 import matplotlib.colors
@@ -1389,18 +1389,18 @@ class PCNN:
         return Output
 
 # Set path
-CurrentDirectory = os.getcwd()
-ImageDirectory = CurrentDirectory + '/Scripts/PCNN/'
-ImageDirectory = CurrentDirectory + '/Tests/Osteons/HumanBone/'
+CurrentDirectory = Path.cwd()
+ImageDirectory = CurrentDirectory / 'Scripts/PCNN/'
+ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
 
 # Open image to segment
-Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
+Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
 Array = sitk.GetArrayFromImage(Image)
 PlotArray(Array, 'RGB Image')
 PlotChanels(Array, 'R', 'G', 'B')
-YUV = RGB2YUV(Array)
+YUV = RGB2YUV(Array[:,:,:3])
 PlotChanels(YUV, 'Y', 'U', 'V')
-HSV = RGB2HSV(Array)
+HSV = RGB2HSV(Array[:,:,:3])
 PlotChanels(HSV, 'H', 'S', 'V')
 
 GS = RGB2Gray(Array)
@@ -1701,11 +1701,12 @@ Segments = morphology.binary_dilation(CementLines,Disk)
 PlotArray(Segments, 'Manual Segmentation')
 
 # Open image to segment
-Image = sitk.ReadImage(ImageDirectory + 'PCNN_Test2.png')
+Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
 Array = sitk.GetArrayFromImage(Image)
 PlotArray(Array, 'RGB Image')
 
 # Match histograms for better phase difference and clarity and rescale
+R, G, B = Array[:,:,0], Array[:,:,1], Array[:,:,2]
 GS = exposure.match_histograms(R, B)
 GS_Rescaled = NormalizeArray(GS)
 PlotArray(GS_Rescaled, 'Grayscale Image')
@@ -2114,3 +2115,57 @@ def PCNN_Segmentation(GS_Image, Wl, Wh, Beta=0.7, Gamma=0.00, dT=1):
     T = 256 - T
 
     return T
+
+
+
+
+
+## New technique using euclidean distances as threshold
+Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
+Array = sitk.GetArrayFromImage(Image)[:,:,:3]
+PlotArray(Array, 'RGB Image')
+
+Norms = NormalizeValues(np.linalg.norm(Array, axis=2))
+PlotArray(Norms,'Norms')
+
+# Very simplified PCNN - Initialization
+Threshold = np.ones(Norms.shape)
+Theta = np.ones(Norms.shape)
+T = np.zeros(Norms.shape)
+N = 0
+W = np.array([[0.5, 1, 0.5],
+              [1, 0, 1],
+              [0.5, 1, 0.5]])
+FiredNumber = 0
+
+# Decrease threshold
+Delta_T = 1/5
+Condition = FiredNumber < Norms.size
+while Condition:
+    Threshold = Threshold - Delta_T
+    Y = (Norms > Threshold) * 1
+    Delta = 0.15
+
+    # Get vectors of firing pixels and compute euclidian distances
+    Vectors = np.unique(Array[Norms > Threshold],axis=0)
+
+    Delta = 1/255
+    VT = 100
+    Beta = 2
+
+    for Vector in Vectors:
+        N += 1
+        F = 1 - NormalizeValues(np.linalg.norm(Array - Vector, axis=2))
+        L = correlate(Y, W, output='float', mode='reflect')
+        Theta = Theta - Delta + VT * Y
+
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+        T = T + N * Y
+
+    FiredNumber = FiredNumber + sum(sum((T > 0) * 1))
+    Condition = FiredNumber < Norms.size
+
+
+Output = 1 - NormalizeValues(T)
+PlotArray(Output,'Output')
