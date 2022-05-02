@@ -1395,12 +1395,12 @@ ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
 
 # Open image to segment
 Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
-Array = sitk.GetArrayFromImage(Image)
+Array = sitk.GetArrayFromImage(Image)[:,:,:3]
 PlotArray(Array, 'RGB Image')
 PlotChanels(Array, 'R', 'G', 'B')
-YUV = RGB2YUV(Array[:,:,:3])
+YUV = RGB2YUV(Array)
 PlotChanels(YUV, 'Y', 'U', 'V')
-HSV = RGB2HSV(Array[:,:,:3])
+HSV = RGB2HSV(Array)
 PlotChanels(HSV, 'H', 'S', 'V')
 
 GS = RGB2Gray(Array)
@@ -1425,7 +1425,7 @@ Markers = measure.label(Segments)
 PCNN_Tools.Set_Image(1-HSV[:,:,1])
 Y = PCNN_Tools.Enhancement()
 Y_Stretched = GrayStretch(Y,0.95)
-PlotArray(Y_Stretched, 'Enhanced Image')
+PlotArray(Y_Stretched, 'Stretched Image')
 
 
 PCNN_Tools.Set_Image(Y_Stretched)
@@ -2169,3 +2169,62 @@ while Condition:
 
 Output = 1 - NormalizeValues(T)
 PlotArray(Output,'Output')
+
+
+
+# Test pipeline
+HSV = RGB2HSV(Array)
+PlotChanels(HSV, 'H', 'S', 'V')
+
+Y_Stretched = GrayStretch(HSV[:,:,1],0.95)
+PlotArray(Y_Stretched, 'Stretched Image')
+
+Gradient = np.round(HSV[:,:,1] * 255).astype('uint8')
+Gradient = filters.rank.gradient(Gradient, morphology.disk(20))
+Gradient = NormalizeValues(Gradient)
+PlotArray(Gradient,'Gradient')
+
+Gradient = Array.copy()
+for i in range (3):
+    G = filters.rank.gradient(Array[:,:,i], morphology.disk(20))
+    Gradient[:,:,i] = G
+Gradient = NormalizeValues(Gradient)
+
+GradientNorm = np.linalg.norm(Gradient, axis=2)
+PlotArray(GradientNorm,'Gradient Norm')
+
+# Use PCNN tool
+PCNN_Tools = PCNN()
+
+# Find Harvesian canals
+PCNN_Tools.Set_Image(GradientNorm)
+H, Bins = PCNN_Tools.Histogram(Plot=True)
+
+
+Otsu = filters.threshold_otsu(GradientNorm)
+# Otsu = 0.05
+Limits = GradientNorm.copy()
+Limits[GradientNorm < Otsu] = 0
+Limits[GradientNorm >= Otsu] = 1
+PlotArray(Limits,'Limits')
+
+
+BinArray = np.zeros(Gradient.shape)
+BinArray[Gradient > Bins[-2]] = 1
+PlotArray(BinArray,'Bin')
+
+Vector = np.array([125,125,50])
+PlotArray(np.abs(Gradient - Vector),'Test')
+PlotArray(YUV[2300:3300,2300:3300,1],'Test')
+
+# Find Harvesian canals
+PCNN_Tools.Set_Image(YUV[:,:,1])
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/7)
+PlotArray(Y_Seg,'Segmented')
+
+Segments = PlotSegment(Y_Seg,4)
+Markers = measure.label(Segments)
+RegionsProps = measure.regionprops(Markers.astype('int'))
+
+
+
