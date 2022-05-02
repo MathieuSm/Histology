@@ -1,7 +1,6 @@
 """
 Code for testing PCNN-PSO-AT with different inputs or fitness function
 """
-
 from pathlib import Path
 import time
 
@@ -388,7 +387,7 @@ def BoundFinding(H_Per, Per):
         N += 1
 
     return N
-def GetSegments(SegmentedArray):
+def GetSegments(SegmentedArray, RGBThreshold=180):
     CementLines = SegmentedArray[:, :, 0].copy()
     Harvesian = SegmentedArray[:, :, 1].copy()
     Osteocytes = SegmentedArray[:, :, 2].copy()
@@ -400,9 +399,9 @@ def GetSegments(SegmentedArray):
     Osteocytes[Osteocytes < Threshold] = 0
     Osteocytes[Osteocytes >= Threshold] = 1
 
-    F0 = SegmentedArray[:, :, 0] > 180
-    F1 = SegmentedArray[:, :, 1] > 180
-    F2 = SegmentedArray[:, :, 2] > 180
+    F0 = SegmentedArray[:, :, 0] > RGBThreshold
+    F1 = SegmentedArray[:, :, 1] > RGBThreshold
+    F2 = SegmentedArray[:, :, 2] > RGBThreshold
     CementLines[F1] = 0
     CementLines[F2] = 0
     Harvesian[F0] = 0
@@ -2189,6 +2188,9 @@ for i in range (3):
     G = filters.rank.gradient(Array[:,:,i], morphology.disk(20))
     Gradient[:,:,i] = G
 Gradient = NormalizeValues(Gradient)
+PlotChanels(Gradient, 'R', 'G', 'B')
+PlotArray(Gradient,'Gradient')
+
 
 GradientNorm = np.linalg.norm(Gradient, axis=2)
 PlotArray(GradientNorm,'Gradient Norm')
@@ -2199,6 +2201,9 @@ PCNN_Tools = PCNN()
 # Find Harvesian canals
 PCNN_Tools.Set_Image(GradientNorm)
 H, Bins = PCNN_Tools.Histogram(Plot=True)
+
+Segments = PCNN_Tools.SPCNN_Segmentation(Delta=1/5)
+PlotSegment(Segments,4)
 
 
 Otsu = filters.threshold_otsu(GradientNorm)
@@ -2227,4 +2232,197 @@ Markers = measure.label(Segments)
 RegionsProps = measure.regionprops(Markers.astype('int'))
 
 
+from skimage import color
 
+Lab = color.rgb2lab(Array[5:-5,5:-5])
+PlotChanels(Lab, 'L', 'a', 'b')
+PlotArray(Lab[:,:,1],'a')
+PlotArray(-Lab[:,:,2],'b')
+PCNN_Tools.Set_Image(Lab[:,:,1])
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/5)
+PlotArray(Y_Seg,'Segmented')
+Segment = PlotSegment(Y_Seg,1)
+PlotArray(Segment,'Segment')
+
+SDilated = morphology.binary_dilation(Segment,morphology.disk(5))
+SDilated = morphology.binary_dilation(SDilated,morphology.disk(5))
+SDilated = morphology.binary_dilation(SDilated,morphology.disk(5))
+PlotArray(SDilated,'Dilated')
+
+SEroded = morphology.binary_erosion(SDilated, morphology.disk(15))
+SEroded = morphology.binary_erosion(SEroded, morphology.disk(15))
+PlotArray(SEroded,'Eroded')
+
+SDilated = morphology.binary_dilation(SEroded,morphology.disk(15))
+PlotArray(SDilated,'Dilated')
+
+Markers = measure.label(SDilated)
+Properties = ['area','label']
+Regions = pd.DataFrame(measure.regionprops_table(Markers.astype('int'),properties=Properties))
+
+Figure, Axes = plt.subplots(1,1)
+Axes.plot(np.arange(len(Regions)),Regions.sort_values(by='area')['area'].values,
+          linestyle='none',marker='o')
+plt.show()
+
+Filter = Regions['area'] > 2000
+
+Harvesian = np.isin(Markers, Regions[Filter]['label'].values)
+Harvesian[Harvesian > 1] == 1
+PlotArray(Harvesian, 'Harvesian Canals')
+
+# Compute distances from Harvesian canals
+MedialAxis, Distances = morphology.medial_axis(1-Harvesian, return_distance=True)
+# Stretched_Distances = GrayStretch(Distances,0.2)
+PlotArray(Distances, 'Distances')
+
+Gradient = NormalizeValues(Lab[:,:,2])*255
+Gradient = filters.rank.gradient(Gradient.astype('uint8'), morphology.disk(20))
+Gradient = NormalizeValues(Gradient)
+PlotArray(Gradient,'Gradient')
+
+Combine = Gradient + NormalizeValues((1-Lab[:,:,2]) * Distances)
+PlotArray(Combine, 'GxD+b')
+
+Otsu = filters.threshold_otsu(Combine)
+Limits = Combine.copy()
+Limits[Combine < Otsu] = 0
+Limits[Combine >= Otsu] = 1
+PlotArray(1-Limits,'Limits')
+
+W_Seg = segmentation.watershed(Combine,Markers,connectivity=1)
+PlotArray(W_Seg,'Watershed segmentation')
+
+PCNN_Tools.Set_Image(Combine)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/7)
+PlotArray(Y_Seg,'Segmented')
+
+
+
+
+
+
+
+
+
+
+# Open manually segmented image
+SegmentedImage = sitk.ReadImage(str(ImageDirectory / 'Stained1_Seg.png'))
+SegmentedArray = sitk.GetArrayFromImage(SegmentedImage)[5:-5,5:-5,0]
+SegmentedArray[SegmentedArray<250] = 0
+SegmentedArray[SegmentedArray>=250] = 1
+PlotArray(SegmentedArray,'Segments')
+
+# Particle Swarm Optimization (PSO) algorithm
+Ps = 20         # Population size
+t = 0           # Iteration number
+Max_times = 10  # Max iteration number
+Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
+Average_FV_std = 1E-3   # Second PSO termination condition
+Image = 1-NormalizeValues(Lab[:,:,2])
+
+# PSO step 1 - Initialization
+AlphaF_Range = np.array([-1,1])*3
+AlphaL_Range = np.array([-1,1])*3
+AlphaT_Range = np.array([-1,1])*3
+
+VF_Range = np.array([-1,1])*3
+VL_Range = np.array([-1,1])*3
+VT_Range = np.array([-1,1])*3
+
+Beta_Range = np.array([-1,1])*3
+
+Ranges = np.array([AlphaF_Range,AlphaL_Range,AlphaT_Range,
+                   VF_Range,VL_Range,VT_Range,Beta_Range])
+Dimensions = len(Ranges)
+
+C1, C2 = 2, 2
+
+RangeAmplitudes = Ranges[:,1] - Ranges[:,0]
+X = np.random.uniform(0,1,(Ps,Dimensions)) * RangeAmplitudes + Ranges[:,0]
+V = C1 * np.random.uniform(-1,1,(Ps,Dimensions)) * RangeAmplitudes \
+  + C2 * np.random.uniform(-1,1) * RangeAmplitudes
+
+
+
+# PSO step 2 - Initial evaluation
+ParameterList = ['AlphaF','AlphaL','AlphaT','VF','VL','VT','Beta']
+Initial_DSCs = np.zeros((Ps, 1))
+for ParticleNumber in range(Ps):
+    ParametersDictionary = {}
+    for ParameterNumber in range(Dimensions):
+        ParameterName = ParameterList[ParameterNumber]
+        ParameterValue = X[ParticleNumber,ParameterNumber]
+        ParametersDictionary[ParameterName] = ParameterValue
+
+    Y = PCNN_Segmentation(Image,ParametersDictionary)
+
+    # Compute dice similarity coefficient with manual segmentation
+    Initial_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedArray)
+
+
+# Set initial best values
+G_Best_Value = Initial_DSCs.max()
+G_Best_Index = np.where(Initial_DSCs == G_Best_Value)[0][0]
+G_Best = X[G_Best_Index]
+
+P_Best_Values = Initial_DSCs.copy()
+P_Best = X.copy()
+
+
+## Start loop
+Average_FVs = np.array([1,0,0])
+NIteration = 0
+while NIteration < 100 and Average_FVs.std() >= Average_FV_std:
+
+    ## PSO step 3 - Update positions and velocities
+    R1, R2 = np.random.uniform(0, 1, 2)
+    V = Omega * V + C1 * R1 * (P_Best - X) + C2 * R2 * (G_Best - X)
+    X = X + V
+    # If new position exceed limits, set to limit
+    X[X < Ranges[:,0]] = np.tile(Ranges[:,0],Ps).reshape((Ps,Dimensions))[X < Ranges[:,0]]
+    X[X > Ranges[:,1]] = np.tile(Ranges[:,1],Ps).reshape((Ps,Dimensions))[X > Ranges[:,1]]
+
+
+
+    ## PSO step 4 - Evaluation of the updated population
+    New_DSCs = np.zeros((Ps, 1))
+    for ParticleNumber in range(Ps):
+        ParametersDictionary = {}
+        for ParameterNumber in range(Dimensions):
+            ParameterName = ParameterList[ParameterNumber]
+            ParameterValue = X[ParticleNumber,ParameterNumber]
+            ParametersDictionary[ParameterName] = ParameterValue
+
+        Y = PCNN_Segmentation(Image,ParametersDictionary)
+
+        # Compute dice similarity coefficient with manual segmentation
+        New_DSCs[ParticleNumber, 0] = DiceCoefficient(Y, SegmentedArray)
+
+    # Update best values if better than previous
+    if New_DSCs.max() > G_Best_Value:
+        G_Best_Value = New_DSCs.max()
+        G_Best_Index = np.where(New_DSCs == G_Best_Value)[0][0]
+        G_Best = X[G_Best_Index]
+
+    ImprovedValues = New_DSCs > P_Best_Values
+    P_Best_Values[ImprovedValues] = New_DSCs[ImprovedValues]
+    Reshaped_IP = np.tile(ImprovedValues,Dimensions).reshape((Ps,Dimensions))
+    P_Best[Reshaped_IP] = X[Reshaped_IP]
+
+
+
+    ## PSO step 5 - Update and check if terminal condition is satisfied
+    NIteration += 1
+    Average_FVs = np.concatenate([Average_FVs[1:],np.array(G_Best_Value).reshape(1)])
+    print('Iteration number: ' + str(NIteration))
+
+
+## PSO step 6 - Output results
+ParametersDictionary = {}
+for ParameterNumber in range(Dimensions):
+    ParameterName = ParameterList[ParameterNumber]
+    ParameterValue = G_Best[ParameterNumber]
+    ParametersDictionary[ParameterName] = ParameterValue
+Y = PCNN_Segmentation(Image,ParametersDictionary)
+PlotArray(Y, 'PCNN Segmentation')
