@@ -834,6 +834,7 @@ PCNN_Tools = PCNN()
 # Find boundaries
 Match = NormalizeValues(exposure.match_histograms(Lab[:,:,2],Lab[:,:,1]))
 PlotArray(Match,'Matched')
+
 PCNN_Tools.Set_Image(Match)
 Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
 PlotArray(Y_Seg,'Segmented')
@@ -871,22 +872,87 @@ Markers = measure.label(Harvesian)
 
 # Compute distances from Harvesian canals
 MedialAxis, Distances = morphology.medial_axis(1-Harvesian, return_distance=True)
-ExpDistances = 1-1/(Distances*1E-3+1)
-PlotArray(ExpDistances, 'Distances')
+Base = 1E1
+NormDistances = Distances / Distances.max()
 
-Combine = ((1-Match) + (1-Boundaries)) * NormalizeValues(Distances)
+C1, C2 = 10, 0.5
+SigDistances = 1 / (1 + np.exp(-C1 * (NormDistances - C2)))
+SigDistances = (SigDistances - SigDistances.min()) / (SigDistances.max() - SigDistances.min())
+PlotArray(SigDistances, 'Distances')
+
+Combine = ((1-Match) + (1-Boundaries)) * SigDistances
 PlotArray(Combine,'Combined')
 
-Limits = (1-Boundaries) * NormalizeValues(Distances)
-Otsu = filters.threshold_otsu(Limits)
-Limits[Limits < Otsu] = 0
-Limits[Limits >= Otsu] = 1
-PlotArray(Limits,'Limits')
+# Limits = (1-Boundaries) * NormalizeValues(Distances)
+# Otsu = filters.threshold_otsu(Limits)
+# Limits[Limits < Otsu] = 0
+# Limits[Limits >= Otsu] = 1
+# PlotArray(Limits,'Limits')
+#
+# Combine = ((1-Match) + (1-Boundaries) + Limits) * NormalizeValues(Distances)
+# PlotArray(Boundaries,'Combined')
 
-Combine = ((1-Match) + (1-Boundaries) + Limits) * NormalizeValues(Distances)
-PlotArray(Combine,'Combined')
+W_Seg_Init = segmentation.watershed(Combine,Markers,mask=Boundaries)
+PlotArray(W_Seg_Init,'Watershed segmentation')
 
-W_Seg = segmentation.watershed(Combine,Markers)
+PCNN_Tools.Set_Image(Match)
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
+PlotArray(Y_Seg,'Segmented')
+
+BoundariesLight = PlotSegments(Y_Seg,[6,19])
+W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight)
 PlotArray(W_Seg,'Watershed segmentation')
 
+W_Seg_Final = segmentation.watershed(Combine,W_Seg, watershed_line=True)
+PlotArray(W_Seg_Final,'Watershed segmentation')
+
+CementLines = np.zeros(W_Seg_Final.shape)
+CementLines[W_Seg_Final == 0] = 1
+CM = morphology.binary_dilation(CementLines,morphology.disk(5))
+PlotArray(CM, 'Cement Lines')
+
+CMLines = np.zeros((CM.shape[0], CM.shape[1], 4))
+CMLines[CM == 1] = [1, 0, 0, 1]
+
+Figure, Axes = plt.subplots(1,1)
+Axes.imshow(Array)
+Axes.imshow(CMLines)
+Axes.axis('off')
+plt.show()
+
+
+
+
+Properties = ['area','perimeter']
+RegionProps = measure.regionprops(W_Seg_Final)
+Coordinates = RegionProps[4].coords
+
+Region = np.zeros((Array.shape[0], Array.shape[1], 4))
+Region[Coordinates[:,0],Coordinates[:,1]] = [1, 0, 0, 0.2]
+
+Figure, Axes = plt.subplots(1,1)
+Axes.imshow(Array)
+Axes.imshow(Region)
+Axes.axis('off')
+plt.show()
+
+
+
+
+
+Dist = np.linspace(0,1)
+C1, C2 = 10, 0.5
+Sig = 1 / (1 + np.exp(-C1 * (Dist - C2)))
+Sig = (Sig - Sig.min()) / (Sig.max() - Sig.min())
+
+
+Figure, Axes = plt.subplots(1,1)
+Axes.plot(Dist, Dist, color=(0,0,0))
+Axes.plot(Dist, Sig, color=(1,0,0))
+plt.show()
+
+Blur = filters.median(Boundaries,selem=morphology.disk(10))
+for i in range(10):
+    Blur = filters.median(Blur, selem=morphology.disk(10))
+PlotArray(Blur,'Blur')
 
