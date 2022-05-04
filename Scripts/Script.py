@@ -5,14 +5,13 @@ Code for testing PCNN-PSO-AT with different inputs or fitness function
 from pathlib import Path
 import time
 
-import matplotlib.colors
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
 from skimage import exposure, morphology, filters, feature, segmentation, measure, color
-import matplotlib as mpl
+from matplotlib.widgets import RangeSlider
 
 desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
@@ -54,18 +53,24 @@ def PlotChanels(MChanelsArray, ChanelA, ChanelB, ChanelC):
     plt.close(Figure)
 
     return
-def PlotSegment(SegmentedImage, SegmentNumber):
+def PlotSegments(SegmentedImage, SegmentsNumber):
 
     SegmentValues = np.unique(SegmentedImage)
-    Segment = SegmentValues[SegmentNumber]
-    Filter = SegmentedImage != Segment
+    SegmentsArray = np.zeros(SegmentedImage.shape)
+    SegmentsNumbers = np.arange(min(SegmentsNumber),max(SegmentsNumber)+1)
+    for SegmentNumber in SegmentsNumbers:
+        Segment = SegmentValues[SegmentNumber]
+        Filter = SegmentedImage != Segment
 
-    PlottedArray = SegmentedImage.copy()
-    PlottedArray[Filter] = -1
-    PlottedArray[PlottedArray >= 0] = 0
-    PlotArray(PlottedArray, 'Segment Number ' + str(SegmentNumber))
+        PlottedArray = SegmentedImage.copy()
+        PlottedArray[Filter] = -1
+        PlottedArray[PlottedArray >= 0] = 0
 
-    return PlottedArray + 1
+        SegmentsArray += PlottedArray + 1
+
+    PlotArray(SegmentsArray, 'Segments ' + ' '.join(str(SegmentNumber) for SegmentNumber in SegmentsNumber) )
+
+    return SegmentsArray
 def PrintTime(Tic, Toc):
     """
     Print elapsed time in seconds to time in HH:MM:SS format
@@ -827,54 +832,146 @@ PCNN_Tools = PCNN()
 
 # Find boundaries
 Match = NormalizeValues(exposure.match_histograms(Lab[:,:,2],Lab[:,:,1]))
-PlotArray(Match,'Matched')
 PCNN_Tools.Set_Image(Match)
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/3)
+Levels = 20
+Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/Levels)
 PlotArray(Y_Seg,'Segmented')
 
-Boundaries = PlotSegment(Y_Seg,2)
+# Write updating functions
+def UpdatePlot(Values):
+
+    SegmentValues = np.unique(Y_Seg)
+    SegmentsArray = np.zeros(Y_Seg.shape)
+
+    SegmentsNumber = np.arange(int(Values[0]),int(Values[1]))
+
+    for SegmentNumber in SegmentsNumber:
+        Segment = SegmentValues[SegmentNumber]
+        Filter = Y_Seg != Segment
+
+        PlottedArray = Y_Seg.copy()
+        PlottedArray[Filter] = -1
+        PlottedArray[PlottedArray >= 0] = 0
+
+        SegmentsArray += PlottedArray + 1
+
+    Show.set_data(SegmentsArray)
+    Figure.canvas.draw_idle()
+
+# Plot
+FigColor = (0.17, 0.18, 0.22)
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+Show = Axes.imshow(Y_Seg, cmap='gray')
+plt.axis('off')
+SliderAxis = plt.axes([0.35, 0.025, 0.55, 0.03], facecolor=FigColor)
+Slider = RangeSlider(SliderAxis, "Segments to Fuse", valmin=0, valmax=Levels,valinit=(0,Levels), valstep=1, color=(0,0,0))
+plt.subplots_adjust(bottom=0.15)
+Slider.on_changed(UpdatePlot)
+plt.show()
+
+Boundaries = PlotSegments(Y_Seg,Slider.val)
 
 
-# Find Harvesian canals
-PCNN_Tools.Set_Image(Lab[:,:,1])
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/5)
-PlotArray(Y_Seg,'Segmented')
-Segment = PlotSegment(Y_Seg,1)
+Point = np.zeros((51,51))
+Point[25,25] = 1
+MedialAxis, Image = morphology.medial_axis(1-Point, return_distance=True)
+Image = NormalizeValues(Image)
+Square = np.zeros(Image.shape)
+Square[17,20:25] = 1
+Square[17,26:31] = 1
+Square[17,20:31] = 1
+Square[7,20:31] = 1
+Square[7:18,20] = 1
+Square[7:18,30] = 1
+
+PlotArray(Image + Square,'Open Square')
+
+Disk = morphology.disk(2)
+W = segmentation.watershed(Image + Square,Point,mask=1-Square)
+PlotArray(W,'Watershed segmentation')
+
+def WatershedFlood(Image, Labels, Vmax):
+    """
+    Insipired from master thesis of Josephson
+    Does not work, for the moment
+    """
+
+    # Number of initial labels
+    N = len(np.unique(Labels))
+
+    # Initialize priority queue
+    Keys = np.arange(256).astype('int')
+    Q = {Key: [] for Key in Keys}
+
+    # Transform image in 8bits integer image
+    Image = np.round(NormalizeValues(Image) * 255).astype('uint8')
+
+    for i in range(N):
+        Y, X = np.where(Labels == i + 1)
+
+        for j in range(len(X)):
+            Key = Image[Y[j], X[j]]
+            Values = [Y[j], X[j]]
+
+            if Q[Key]:
+                Q[Key] = [Q[Key][0], Values]
+            else:
+                Q[Key] = [Values]
+
+    EmptyQ = False
+
+    while not EmptyQ:
+
+        for i in range(256):
+
+            if not Q[i]:
+                EmptyQ = True
+                continue
+
+            EmptyQ = False
+
+            for j in range(len(Q[i])):
+                Y, X = Q[i].pop(0)
+
+                if X == 0:
+                    cX = [X, X + 1]
+                elif X == Image.shape[1] - 1:
+                    cX = [X - 1, X]
+                else:
+                    cX = [X - 1, X, X + 1]
+                if Y == 0:
+                    cY = [Y, Y + 1]
+                elif Y == Image.shape[0] - 1:
+                    cY = [Y - 1, Y]
+                else:
+                    cY = [Y - 1, Y, Y + 1]
+
+                Marker = Labels[Y, X]
+
+                for x in cX:
+                    for y in cY:
+
+                        C1 = x == X
+                        C2 = y == Y
+                        C3 = Labels[y, x] > 0
+                        C4 = Image[y, x] > Vmax
+
+                        if not (C1 * C2 + C3 + C4):
+                            Labels[y, x] = Marker
+                            Key = Image[y, x]
+                            Values = [y, x]
+
+                            if Q[Key]:
+                                Q[Key] = [Q[Key][0], Values]
+                            else:
+                                Q[Key] = [Values]
+
+                break
+
+            break
+
+    return Labels
 
 
-Binary = Segment.copy()
-Disk = morphology.disk(5)
-for i in range(3):
-    Binary = morphology.binary_dilation(Binary, Disk)
-Disk = morphology.disk(10)
-for i in range(3):
-    Binary = morphology.binary_erosion(Binary, Disk)
-Disk = morphology.disk(15)
-Binary = morphology.binary_dilation(Binary, Disk)
-
-PlotArray(Binary,'Segmented Image + 45')
-
-Markers = measure.label(Binary)
-Props = ['area','label']
-Regions = pd.DataFrame(measure.regionprops_table(Markers,properties=Props))
-Filter = Regions['area'] > 15000
-Harvesian = np.isin(Markers, Regions[Filter]['label'])
-PlotArray(Harvesian,'Harvesian canals')
-
-# Compute distances from Harvesian canals
-MedialAxis, Distances = morphology.medial_axis(1-Harvesian, return_distance=True)
-PlotArray(Distances, 'Distances')
-
-Combine = (1-Match) * NormalizeValues(Distances)
-PlotArray(Combine,'Combined')
-
-Limits = Boundaries * (1-NormalizeValues(Distances))
-Otsu = filters.threshold_otsu(Limits)
-Limits[Limits < Otsu] = 0
-Limits[Limits >= Otsu] = 1
-PlotArray(Limits,'Limits')
-
-W_Seg = segmentation.watershed(Combine,Markers,connectivity=1, mask=Limits)
-PlotArray(W_Seg,'Watershed segmentation')
-
-
+Test = WatershedFlood(Combine,Markers,250)
+PlotArray(Test == 3,'WatershedTest')
