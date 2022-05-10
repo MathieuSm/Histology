@@ -900,8 +900,25 @@ Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
 PlotArray(Y_Seg,'Segmented')
 
 BoundariesLight = PlotSegments(Y_Seg,[6,19])
-W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight)
+W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight, watershed_line=True)
 PlotArray(W_Seg,'Watershed segmentation')
+
+
+## Before Mark boundaries, connect same areas and fill the areas
+
+Contours = segmentation.mark_boundaries(Array,W_Seg,color=(1,0,0))
+ImageContours = np.zeros(W_Seg.shape)
+for Contour in Contours:
+    ImageContours[np.round(Contour).astype('int')] = 1
+C = morphology.binary_dilation(ImageContours,morphology.disk(5))
+PlotArray(Contours, 'Cement Lines')
+
+CementLines = np.zeros(W_Seg.shape)
+Filter1 = W_Seg == 0
+Filter2 = BoundariesLight == 0
+CementLines[Filter1 & Filter2] = 1
+CM = morphology.binary_dilation(CementLines,morphology.disk(5))
+PlotArray(CM, 'Cement Lines')
 
 W_Seg_Final = segmentation.watershed(Combine,W_Seg, watershed_line=True)
 PlotArray(W_Seg_Final,'Watershed segmentation')
