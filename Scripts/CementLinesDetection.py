@@ -5,14 +5,12 @@ Code for testing PCNN-PSO-AT with different inputs or fitness function
 from pathlib import Path
 import time
 
-import matplotlib.colors
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
-from skimage import exposure, morphology, filters, feature, segmentation, measure, color
-import matplotlib as mpl
+from skimage import exposure, morphology, segmentation, measure, color
 
 desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
@@ -830,7 +828,21 @@ ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
 
 # Open image to segment
 Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
-Array = sitk.GetArrayFromImage(Image)[5:-5,5:-5,:3]
+
+OriginalSize = np.array(Image.GetSize())
+OriginalSpacing = np.array(Image.GetSpacing())
+
+NewSpacing = OriginalSpacing * 3
+NewSize = tuple([int(v) for v in np.round(OriginalSize / NewSpacing)])
+
+Resampler = sitk.ResampleImageFilter()
+Resampler.SetReferenceImage(Image)
+Resampler.SetOutputSpacing(NewSpacing)
+Resampler.SetSize(NewSize)
+Resampled_Sample = Resampler.Execute(Image)
+
+
+Array = sitk.GetArrayFromImage(Resampled_Sample)[:,:,:3]
 PlotArray(Array, 'RGB Image')
 PlotChanels(Array, 'R', 'G', 'B')
 Lab = color.rgb2lab(Array)
@@ -857,23 +869,24 @@ Segment = PlotSegments(Y_Seg,[1])
 
 
 Binary = Segment.copy()
-Disk = morphology.disk(5)
+Disk = morphology.disk(2)
 for i in range(3):
     Binary = morphology.binary_dilation(Binary, Disk)
-Disk = morphology.disk(10)
+PlotArray(Binary,'Binary +6')
+Disk = morphology.disk(5)
 for i in range(3):
     Binary = morphology.binary_erosion(Binary, Disk)
-Disk = morphology.disk(15)
+PlotArray(Binary,'Binary -9')
+Disk = morphology.disk(8)
 Binary = morphology.binary_dilation(Binary, Disk)
 for i in range(5):
     Binary = morphology.binary_dilation(Binary, Disk)
-
-PlotArray(Binary,'Segmented Image + 75')
+PlotArray(Binary,'Segmented Image + 31')
 
 Markers = measure.label(Binary)
 Props = ['area','label']
 Regions = pd.DataFrame(measure.regionprops_table(Markers,properties=Props))
-Filter = Regions['area'] > 35000
+Filter = Regions['area'] > 5000
 Harvesian = np.isin(Markers, Regions[Filter]['label'])
 PlotArray(Harvesian,'Harvesian canals')
 Markers = measure.label(Harvesian)
@@ -927,7 +940,8 @@ for R in range(1,len(RegionProps)):
     # PlotArray(TestFill,'Fill test')
 
     BinArray = morphology.binary_dilation(TestFill,morphology.disk(20))
-    BinArray = morphology.binary_erosion(BinArray,morphology.disk(20))
+    BinArray = morphology.binary_erosion(BinArray,morphology.disk(40))
+    BinArray = morphology.binary_dilation(BinArray,morphology.disk(20))
     # PlotArray(BinArray,'Smooth test')
 
     BMarked = segmentation.find_boundaries(BinArray)
@@ -936,6 +950,8 @@ for R in range(1,len(RegionProps)):
     CementLines += BMarked
 
 CM = morphology.binary_dilation(CementLines,morphology.disk(5))
+CM = morphology.binary_dilation(CM,morphology.disk(5))
+
 PlotArray(CM, 'Cement Lines')
 
 Region = np.ones((CM.shape[0], CM.shape[1], 4)).astype('uint') * 255
