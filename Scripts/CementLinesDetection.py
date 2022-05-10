@@ -946,3 +946,4 @@ PlotArray(Region, 'Cement Lines')
 
 # Skeletonize cement lines
 Skeleton = morphology.skeletonize(CM)
+Skeleton.sum() / Skeleton.size * 100
