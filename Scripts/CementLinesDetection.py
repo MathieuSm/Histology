@@ -97,6 +97,14 @@ def NormalizeValues(Image):
     N_Image = (Image - Image.min()) / (Image.max()-Image.min())
 
     return N_Image
+def GaussianKernel(Length=5, Sigma=1.):
+    """
+    Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+    """
+    Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+    Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+    Kernel = np.outer(Gauss, Gauss)
+    return Kernel / sum(sum(Kernel))
 def BetweenClassVariance(GrayScale, Segmented):
 
     Ignited_Neurons = Segmented == 1
@@ -900,76 +908,28 @@ Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
 PlotArray(Y_Seg,'Segmented')
 
 BoundariesLight = PlotSegments(Y_Seg,[6,19])
-W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight, watershed_line=True)
+W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight)
 PlotArray(W_Seg,'Watershed segmentation')
 
-
-## Before Mark boundaries, connect same areas and fill the areas
-
-Contours = segmentation.mark_boundaries(Array,W_Seg,color=(1,0,0))
-ImageContours = np.zeros(W_Seg.shape)
-for Contour in Contours:
-    ImageContours[np.round(Contour).astype('int')] = 1
-C = morphology.binary_dilation(ImageContours,morphology.disk(5))
-PlotArray(Contours, 'Cement Lines')
-
+RegionProps = measure.regionprops(Markers)
 CementLines = np.zeros(W_Seg.shape)
-Filter1 = W_Seg == 0
-Filter2 = BoundariesLight == 0
-CementLines[Filter1 & Filter2] = 1
+for R in range(1,len(RegionProps)):
+    SegTest = PlotSegments(W_Seg,[R])
+
+
+    Center = RegionProps[R].centroid
+    TestFill = segmentation.flood(SegTest,tuple([int(C) for C in Center]))
+    # PlotArray(TestFill,'Fill test')
+
+    BMarked = segmentation.find_boundaries(TestFill)
+    # PlotArray(BMarked,'Marker Boundaries')
+    CementLines += BMarked
+
 CM = morphology.binary_dilation(CementLines,morphology.disk(5))
 PlotArray(CM, 'Cement Lines')
 
-W_Seg_Final = segmentation.watershed(Combine,W_Seg, watershed_line=True)
-PlotArray(W_Seg_Final,'Watershed segmentation')
+Region = np.ones((CM.shape[0], CM.shape[1], 4)).astype('uint') * 255
+Region[:,:,:3] = Array
+Region[CM == 1] = [255, 0, 0, 255]
 
-CementLines = np.zeros(W_Seg_Final.shape)
-CementLines[W_Seg_Final == 0] = 1
-CM = morphology.binary_dilation(CementLines,morphology.disk(5))
-PlotArray(CM, 'Cement Lines')
-
-CMLines = np.zeros((CM.shape[0], CM.shape[1], 4))
-CMLines[CM == 1] = [1, 0, 0, 1]
-
-Figure, Axes = plt.subplots(1,1)
-Axes.imshow(Array)
-Axes.imshow(CMLines)
-Axes.axis('off')
-plt.show()
-
-
-
-
-Properties = ['area','perimeter']
-RegionProps = measure.regionprops(W_Seg_Final)
-Coordinates = RegionProps[4].coords
-
-Region = np.zeros((Array.shape[0], Array.shape[1], 4))
-Region[Coordinates[:,0],Coordinates[:,1]] = [1, 0, 0, 0.2]
-
-Figure, Axes = plt.subplots(1,1)
-Axes.imshow(Array)
-Axes.imshow(Region)
-Axes.axis('off')
-plt.show()
-
-
-
-
-
-Dist = np.linspace(0,1)
-C1, C2 = 10, 0.5
-Sig = 1 / (1 + np.exp(-C1 * (Dist - C2)))
-Sig = (Sig - Sig.min()) / (Sig.max() - Sig.min())
-
-
-Figure, Axes = plt.subplots(1,1)
-Axes.plot(Dist, Dist, color=(0,0,0))
-Axes.plot(Dist, Sig, color=(1,0,0))
-plt.show()
-
-Blur = filters.median(Boundaries,selem=morphology.disk(10))
-for i in range(10):
-    Blur = filters.median(Blur, selem=morphology.disk(10))
-PlotArray(Blur,'Blur')
-
+PlotArray(Region, 'Cement Lines')
