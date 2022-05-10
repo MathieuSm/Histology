@@ -1729,6 +1729,11 @@ Omega = 0.9 - 0.5 * t/Max_times     # Inertia factor
 Average_FV_std = 1E-3   # Second PSO termination condition
 Image = 1-R / R.max()
 
+
+# From cement lines detection
+# Segments = CM
+# Image = Lab[:,:,1]/Lab[:,:,1].max()
+
 # PSO step 1 - Initialization
 AlphaF_Range = np.array([-1,1])*3
 AlphaL_Range = np.array([-1,1])*3

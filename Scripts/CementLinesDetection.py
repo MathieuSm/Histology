@@ -911,18 +911,28 @@ BoundariesLight = PlotSegments(Y_Seg,[6,19])
 W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight)
 PlotArray(W_Seg,'Watershed segmentation')
 
-RegionProps = measure.regionprops(Markers)
-CementLines = np.zeros(W_Seg.shape)
-for R in range(1,len(RegionProps)):
-    SegTest = PlotSegments(W_Seg,[R])
+# Fuse regions 4, 5, and 6
+W_Seg[W_Seg == 4] = 5
+W_Seg[W_Seg == 6] = 5
 
+RegionProps = measure.regionprops(W_Seg)
+CementLines = np.zeros(W_Seg.shape)
+Segments = np.unique(W_Seg)
+for R in range(1,len(RegionProps)):
+
+    SegTest = PlotSegments(W_Seg,[R])
 
     Center = RegionProps[R].centroid
     TestFill = segmentation.flood(SegTest,tuple([int(C) for C in Center]))
     # PlotArray(TestFill,'Fill test')
 
-    BMarked = segmentation.find_boundaries(TestFill)
+    BinArray = morphology.binary_dilation(TestFill,morphology.disk(20))
+    BinArray = morphology.binary_erosion(BinArray,morphology.disk(20))
+    # PlotArray(BinArray,'Smooth test')
+
+    BMarked = segmentation.find_boundaries(BinArray)
     # PlotArray(BMarked,'Marker Boundaries')
+
     CementLines += BMarked
 
 CM = morphology.binary_dilation(CementLines,morphology.disk(5))
@@ -933,3 +943,6 @@ Region[:,:,:3] = Array
 Region[CM == 1] = [255, 0, 0, 255]
 
 PlotArray(Region, 'Cement Lines')
+
+# Skeletonize cement lines
+Skeleton = morphology.skeletonize(CM)
