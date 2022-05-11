@@ -1,5 +1,5 @@
 """
-Code for testing PCNN-PSO-AT with different inputs or fitness function
+Code used to detect cement lines
 """
 
 from pathlib import Path
@@ -823,26 +823,26 @@ class PCNN:
 
 # Set path
 CurrentDirectory = Path.cwd()
-ImageDirectory = CurrentDirectory / 'Scripts/PCNN/'
 ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
 
 # Open image to segment
 Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
+Image.SetSpacing((0.1225,0.1225))  # Estimated from PixelSpacing.py
 
 OriginalSize = np.array(Image.GetSize())
 OriginalSpacing = np.array(Image.GetSpacing())
 
-NewSpacing = OriginalSpacing * 3
-NewSize = tuple([int(v) for v in np.round(OriginalSize / NewSpacing)])
+NewSpacing = np.array((0.5,0.5))
+NewSize = tuple([int(v) for v in np.round(OriginalSize * OriginalSpacing / NewSpacing)])
 
 Resampler = sitk.ResampleImageFilter()
 Resampler.SetReferenceImage(Image)
 Resampler.SetOutputSpacing(NewSpacing)
 Resampler.SetSize(NewSize)
-Resampled_Sample = Resampler.Execute(Image)
+Resampled_Image = Resampler.Execute(Image)
 
-
-Array = sitk.GetArrayFromImage(Resampled_Sample)[:,:,:3]
+Array = sitk.GetArrayFromImage(Resampled_Image)[:,:,:3]
+Array = np.round(NormalizeValues(Array) * 255).astype('uint8')
 PlotArray(Array, 'RGB Image')
 PlotChanels(Array, 'R', 'G', 'B')
 Lab = color.rgb2lab(Array)
@@ -949,8 +949,8 @@ for R in range(1,len(RegionProps)):
 
     CementLines += BMarked
 
-CM = morphology.binary_dilation(CementLines,morphology.disk(5))
-CM = morphology.binary_dilation(CM,morphology.disk(5))
+CM = morphology.binary_dilation(CementLines,morphology.disk(2))
+# CM = morphology.binary_dilation(CM,morphology.disk(5))
 
 PlotArray(CM, 'Cement Lines')
 
@@ -962,4 +962,4 @@ PlotArray(Region, 'Cement Lines')
 
 # Skeletonize cement lines
 Skeleton = morphology.skeletonize(CM)
-Skeleton.sum() / Skeleton.size * 100
+Skeleton.sum() * 2 / Skeleton.size * 100

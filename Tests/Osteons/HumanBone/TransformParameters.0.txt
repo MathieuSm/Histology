@@ -1,6 +1,6 @@
-(Transform "EulerTransform")
-(NumberOfParameters 3)
-(TransformParameters 0.000105 3.788725 -3.476152)
+(Transform "AffineTransform")
+(NumberOfParameters 6)
+(TransformParameters 1.000100 -0.000008 0.000002 0.999904 2.265125 -17.011450)
 (InitialTransformParametersFileName "NoInitialTransform")
 (UseBinaryFormatForTransformationParameters "false")
 (HowToCombineTransforms "Compose")
@@ -10,15 +10,15 @@
 (MovingImageDimension 2)
 (FixedInternalImagePixelType "float")
 (MovingInternalImagePixelType "float")
-(Size 5544 5597)
+(Size 3000 2939)
 (Index 0 0)
 (Spacing 1.0000000000 1.0000000000)
 (Origin 0.0000000000 0.0000000000)
 (Direction 1.0000000000 0.0000000000 0.0000000000 1.0000000000)
 (UseDirectionCosines "true")
 
-// EulerTransform specific
-(CenterOfRotationPoint 2771.5000000000 2798.0000000000)
+// AdvancedAffineTransform specific
+(CenterOfRotationPoint 1499.5000000000 1469.0000000000)
 
 // ResampleInterpolator specific
 (ResampleInterpolator "FinalBSplineInterpolator")
