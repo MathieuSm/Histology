@@ -823,11 +823,11 @@ class PCNN:
 
 # Set path
 CurrentDirectory = Path.cwd()
-ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
+ImageDirectory = CurrentDirectory / 'Tests/Osteons/BovineBone/'
 
 # Open image to segment
-Image = sitk.ReadImage(str(ImageDirectory / 'Stained1_Registered.png'))
-Image.SetSpacing((0.1225,0.1225))  # Estimated from PixelSpacing.py
+Image = sitk.ReadImage(str(ImageDirectory / 'Toluidinblue_protocol2B_20.jpg'))
+Image.SetSpacing(np.array([0.1225,0.1225])*2.5)  # Estimated from PixelSpacing.py
 
 OriginalSize = np.array(Image.GetSize())
 OriginalSpacing = np.array(Image.GetSpacing())
@@ -847,119 +847,8 @@ PlotArray(Array, 'RGB Image')
 PlotChanels(Array, 'R', 'G', 'B')
 Lab = color.rgb2lab(Array)
 PlotChanels(Lab, 'L', 'a', 'b')
+HSV = color.rgb2hsv(Array)
+PlotChanels(HSV, 'H', 'S', 'V')
 
-# Use PCNN tool
-PCNN_Tools = PCNN()
-
-# Find boundaries
-Match = NormalizeValues(exposure.match_histograms(Lab[:,:,2],Lab[:,:,1]))
-PlotArray(Match,'Matched')
-
-PCNN_Tools.Set_Image(Match)
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
-PlotArray(Y_Seg,'Segmented')
-
-Boundaries = PlotSegments(Y_Seg,[7,19])
-
-# Find Harvesian canals
-PCNN_Tools.Set_Image(Lab[:,:,1])
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/5)
-PlotArray(Y_Seg,'Segmented')
-Segment = PlotSegments(Y_Seg,[1])
-
-
-Binary = Segment.copy()
-Disk = morphology.disk(2)
-for i in range(3):
-    Binary = morphology.binary_dilation(Binary, Disk)
-PlotArray(Binary,'Binary +6')
-Disk = morphology.disk(5)
-for i in range(3):
-    Binary = morphology.binary_erosion(Binary, Disk)
-PlotArray(Binary,'Binary -9')
-Disk = morphology.disk(8)
-Binary = morphology.binary_dilation(Binary, Disk)
-for i in range(5):
-    Binary = morphology.binary_dilation(Binary, Disk)
-PlotArray(Binary,'Segmented Image + 31')
-
-Markers = measure.label(Binary)
-Props = ['area','label']
-Regions = pd.DataFrame(measure.regionprops_table(Markers,properties=Props))
-Filter = Regions['area'] > 5000
-Harvesian = np.isin(Markers, Regions[Filter]['label'])
-PlotArray(Harvesian,'Harvesian canals')
-Markers = measure.label(Harvesian)
-
-# Compute distances from Harvesian canals
-MedialAxis, Distances = morphology.medial_axis(1-Harvesian, return_distance=True)
-Base = 1E1
-NormDistances = Distances / Distances.max()
-
-C1, C2 = 10, 0.5
-SigDistances = 1 / (1 + np.exp(-C1 * (NormDistances - C2)))
-SigDistances = (SigDistances - SigDistances.min()) / (SigDistances.max() - SigDistances.min())
-PlotArray(SigDistances, 'Distances')
-
-Combine = ((1-Match) + (1-Boundaries)) * SigDistances
-PlotArray(Combine,'Combined')
-
-# Limits = (1-Boundaries) * NormalizeValues(Distances)
-# Otsu = filters.threshold_otsu(Limits)
-# Limits[Limits < Otsu] = 0
-# Limits[Limits >= Otsu] = 1
-# PlotArray(Limits,'Limits')
-#
-# Combine = ((1-Match) + (1-Boundaries) + Limits) * NormalizeValues(Distances)
-# PlotArray(Boundaries,'Combined')
-
-W_Seg_Init = segmentation.watershed(Combine,Markers,mask=Boundaries)
-PlotArray(W_Seg_Init,'Watershed segmentation')
-
-PCNN_Tools.Set_Image(Match)
-Y_Seg = PCNN_Tools.SPCNN_Segmentation(Delta=1/20)
-PlotArray(Y_Seg,'Segmented')
-
-BoundariesLight = PlotSegments(Y_Seg,[6,19])
-W_Seg = segmentation.watershed(Combine,W_Seg_Init,mask=BoundariesLight)
-PlotArray(W_Seg,'Watershed segmentation')
-
-# Fuse regions 4, 5, and 6
-W_Seg[W_Seg == 4] = 5
-W_Seg[W_Seg == 6] = 5
-
-RegionProps = measure.regionprops(W_Seg)
-CementLines = np.zeros(W_Seg.shape)
-Segments = np.unique(W_Seg)
-for R in range(1,len(RegionProps)):
-
-    SegTest = PlotSegments(W_Seg,[R])
-
-    Center = RegionProps[R].centroid
-    TestFill = segmentation.flood(SegTest,tuple([int(C) for C in Center]))
-    # PlotArray(TestFill,'Fill test')
-
-    BinArray = morphology.binary_dilation(TestFill,morphology.disk(20))
-    BinArray = morphology.binary_erosion(BinArray,morphology.disk(40))
-    BinArray = morphology.binary_dilation(BinArray,morphology.disk(20))
-    # PlotArray(BinArray,'Smooth test')
-
-    BMarked = segmentation.find_boundaries(BinArray)
-    # PlotArray(BMarked,'Marker Boundaries')
-
-    CementLines += BMarked
-
-CM = morphology.binary_dilation(CementLines,morphology.disk(2))
-# CM = morphology.binary_dilation(CM,morphology.disk(5))
-
-PlotArray(CM, 'Cement Lines')
-
-Region = np.ones((CM.shape[0], CM.shape[1], 4)).astype('uint') * 255
-Region[:,:,:3] = Array
-Region[CM == 1] = [255, 0, 0, 255]
-
-PlotArray(Region, 'Cement Lines')
-
-# Skeletonize cement lines
-Skeleton = morphology.skeletonize(CM)
-Skeleton.sum() * 2 / Skeleton.size * 100
+v_min, v_max = np.percentile(HSV, (0.2, 99.8))
+better_contrast = exposure.rescale_intensity(HSV, in_range=(v_min, v_max))
