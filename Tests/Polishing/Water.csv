@@ -1,0 +1,7 @@
+Polishing Paper,Test Run,Samples,Side,Holder,Position,Initial Max Thickness [um],Test time [min],Rotation velocity [rpm],Final Max Thickness [um],Remarks
+600p 1200,1,418 L,Medial,A,A,500,,35,,Did not glued
+600p 1200,1,418 L,Lateral,B,B,284,10,35,153,
+600p 1200,1,437 R,Medial,C,C,954,40,35,592,
+600p 1200,1,437 R,Lateral,D,D,240,5,35,120,
+600p 1200,1,418 R,Medial,E,E,388,10,35,320,
+600p 1200,1,418 R,Lateral,F,F,397,10,35,177,

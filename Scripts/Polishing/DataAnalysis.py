@@ -16,7 +16,6 @@ CurrentDirectory = Path.cwd()
 DataPath = CurrentDirectory / 'Tests/Polishing/Tests.csv'
 Data = pd.read_csv(DataPath)
 
-
 # Compute delta at each run
 Data['Delta [um]'] = Data['Initial Max Thickness [um]'] - Data['Final Max Thickness [um]']
 
@@ -44,6 +43,7 @@ plt.show()
 Data['Distance [rev]'] = Data['Test time [min]'] * Data['Rotation velocity [rpm]']
 Data['Total Distance [rev]'] = Data.groupby('Groups')['Distance [rev]'].cumsum()
 Data['Total Grinding [um]'] = Data.groupby('Groups')['Delta [um]'].cumsum()
+
 
 Figure, Axes = plt.subplots(1,1,figsize=(5.5*1.5,4.5*1.5))
 i = 0
@@ -92,7 +92,7 @@ def PlotRegressionResults(Model, Data, Alpha=0.95):
 
     ## Plot
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5 * 1.5, 4.5 * 1.5))
-    Data.groupby('Groups').plot(x='Total Distance [rev]',y='Total Grinding [um]', label='_nolegend_',
+    Data.groupby('Groups').plot(x='Total Distance [rev]',y='Total Grinding [um]', legend=None, label='_nolabel_',
                                 ax=Axes, color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none')
     Axes.plot([], color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none', label='Data')
     Axes.plot(np.exp(X_Pred[:,1]), Y_Fit, color=(1, 0, 0), linestyle='--', label='Fit')
@@ -184,3 +184,74 @@ for Index in R_Data.index:
     DataFrame = pd.DataFrame([Thickness2Grind + MinThickness - ThicknessGrounded],index=[Sample])
     FinalThickness = pd.concat([FinalThickness, DataFrame])
 
+
+# Fit run with water
+DataPath = CurrentDirectory / 'Tests/Polishing/Tests.csv'
+Data = pd.read_csv(DataPath)
+Data = Data[Data['Test Run'] == 6]
+def PlotRegressionResults(Model, Data, Alpha=0.95):
+
+    ## Get data from the model
+    Y_Obs = Model.model.endog
+    N = int(Model.nobs)
+    C = np.matrix(Model.cov_params())
+    X = np.matrix(Model.model.exog)
+
+    X_Pred = np.matrix(np.ones((50,2)))
+    X_Pred[:,1] = np.matrix(np.linspace(X.min(),X.max(),50)).T
+    Y_Fit = Model.predict(X_Pred, transform=False)
+
+    if not C.shape[0] == X.shape[1]:
+        C = C[:-1,:-1]
+
+
+    ## Compute R2 and standard error of the estimate
+    E = Y_Obs - Model.predict()
+    RSS = np.sum(E ** 2)
+    SE = np.sqrt(RSS / Model.df_resid)
+    TSS = np.sum((Model.model.endog - Model.model.endog.mean()) ** 2)
+    RegSS = TSS - RSS
+    R2 = RegSS / TSS
+
+    B_0 = np.sqrt(np.diag(np.abs(X_Pred * C * X_Pred.T)))
+    t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
+    CI_Line_u = Y_Fit + t_Alpha[0] * SE * B_0
+    CI_Line_o = Y_Fit + t_Alpha[1] * SE * B_0
+
+    ## Plot
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5 * 1.5, 4.5 * 1.5))
+    Data.groupby('Groups').plot(x='Total Distance [rev]',y='Total Grinding [um]', legend=None, label='_nolabel_',
+                                ax=Axes, color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none')
+    Axes.plot([], color=(0, 0, 0), linestyle='--', marker='o', fillstyle='none', label='Data')
+    Axes.plot(X_Pred[:,1], Y_Fit, color=(1, 0, 0), linestyle='--', label='Fit')
+    # Axes.fill_between(np.linspace(X.min(),X.max()), CI_Line_u, CI_Line_o, color=(0, 0, 0, 0.1), label='95% CI')
+    Axes.set_xlabel('Cumulative distance [rev]')
+    Axes.set_ylabel('Cumulative grinding [$\mu$m]')
+    Axes.annotate(r'N Groups : ' + str(len(Data.groupby('Groups'))), xy=(0.25, 0.925), xycoords='axes fraction')
+    Axes.annotate(r'N Points : ' + str(N), xy=(0.25, 0.86), xycoords='axes fraction')
+    Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.05, 0.75), xycoords='axes fraction')
+    Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.05, 0.685), xycoords='axes fraction')
+    Axes.set_xlim([0, X.max()*1.05])
+    Axes.set_ylim([0, max(Y_Obs.max(),Y_Fit.max())*1.05])
+    plt.legend(ncol=1, loc='upper left')
+    plt.show()
+
+    return R2, SE
+
+# Samples = ['391 R Medial', '391 L Medial', '391 L Lateral']
+#
+# for Sample in Samples:
+#     LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
+#     LM_Data['x'] = np.log(LM_Data['Total Distance [rev]'] - 1)
+#     LM_Data['y'] = LM_Data['Total Grinding [um]']
+#     LM_Data = LM_Data[LM_Data['Groups'] == Sample]
+#     LMM = smf.ols('y ~ x', data=LM_Data).fit(reml=True)
+#     # LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
+#     PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
+#     print(LMM.params)
+
+LM_Data = pd.DataFrame(Data.dropna(subset='Final Max Thickness [um]'))
+LM_Data['x'] = LM_Data['Total Distance [rev]']
+LM_Data['y'] = LM_Data['Total Grinding [um]']
+LMM = smf.mixedlm('y ~ x', data=LM_Data, groups=LM_Data['Groups']).fit(reml=True)
+PlotRegressionResults(LMM, LM_Data, Alpha=0.95)
