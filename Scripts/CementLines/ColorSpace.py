@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, LogNorm
 from scipy.ndimage import correlate
 from skimage import exposure, morphology, segmentation, measure, color, filters
 
@@ -31,28 +32,53 @@ def PlotArray(Array, Title, CMap='gray', ColorBar=False):
     plt.close(Figure)
 
     return
-def PlotChanels(MChanelsArray, ChanelA, ChanelB, ChanelC, CMap='gray', CBar=False):
+def PlotChanels(MChanelsArray, Type):
 
     A = MChanelsArray[:, :, 0]
     B = MChanelsArray[:, :, 1]
     C = MChanelsArray[:, :, 2]
 
-    Figure, Axes = plt.subplots(1, 3)
-    Axes[0].imshow(A, cmap=CMap)
-    Axes[0].set_title(ChanelA + ' Channel')
-    Axes[0].axis('off')
-    Axes[1].imshow(B, cmap=CMap)
-    Axes[1].set_title(ChanelB + ' Channel')
+    Figure, Axes = plt.subplots(1, 3, figsize=(7,4))
+
+    if Type == 'RGB':
+        CMap_A = LinearSegmentedColormap.from_list('', [(0, 0, 0), (1, 0, 0)])
+        Image_A = Axes[0].imshow(A, cmap=CMap_A)
+        plt.colorbar(Image_A, orientation='horizontal', ax=Axes[0])
+        Axes[0].set_title('R Channel')
+        Axes[0].axis('off')
+
+        CMap_B = LinearSegmentedColormap.from_list('', [(0, 0, 0), (0, 1, 0)])
+        Image_B = Axes[1].imshow(B, cmap=CMap_B)
+        plt.colorbar(Image_B, orientation='horizontal', ax=Axes[1])
+        Axes[1].set_title('B Channel')
+        Axes[1].axis('off')
+
+        CMap_C = LinearSegmentedColormap.from_list('', [(0, 0, 0), (0, 0, 1)])
+        Image_C = Axes[2].imshow(C, cmap=CMap_C)
+        plt.colorbar(Image_C, orientation='horizontal', ax=Axes[2])
+        Axes[2].set_title('C Channel')
+
+    elif Type == 'Lab':
+
+        CMap_A = LinearSegmentedColormap.from_list('', [(0, 0, 0), (1, 1, 1)])
+        Image_A = Axes[0].imshow(A, cmap=CMap_A)
+        plt.colorbar(Image_A, orientation='horizontal', ax=Axes[0])
+        Axes[0].set_title('L Channel')
+
+        CMap_B = LinearSegmentedColormap.from_list('', [(0, 1, 0), (0.35, 0.35, 0.35), (1, 0, 0)])
+        Image_B = Axes[1].imshow(B, cmap=CMap_B)
+        plt.colorbar(Image_B, orientation='horizontal', ax=Axes[1])
+        Axes[1].set_title('a Channel')
+
+        CMap_C = LinearSegmentedColormap.from_list('', [(0, 0, 1), (0.35, 0.35, 0.35), (1, 1, 0)])
+        Image_C = Axes[2].imshow(C, cmap=CMap_C)
+        plt.colorbar(Image_C, orientation='horizontal', ax=Axes[2])
+        Axes[2].set_title('b Channel')
+
     Axes[1].axis('off')
-    Image = Axes[2].imshow(C, cmap=CMap)
-    Axes[2].set_title(ChanelC + ' Channel')
+    Axes[1].axis('off')
     Axes[2].axis('off')
-
-    if CBar:
-        CBar_Axis = Figure.add_axes([0.1, 0.15, 0.8, 0.05])
-        Figure.colorbar(Image, cax=CBar_Axis, orientation="horizontal")
-
-    plt.subplots_adjust(0.05,0.05,0.95,0.95,0.05)
+    plt.subplots_adjust(0.05,0.1,0.95,0.9,0.05)
     plt.show()
     plt.close(Figure)
 
@@ -84,6 +110,22 @@ def PlotHistogram(Image):
     plt.subplots_adjust(left=0.175)
     plt.show()
     plt.close(Figure)
+def PlotSurface(Image, Title, CMap='gray', ColorBar=False):
+
+    X, Y = np.arange(Image.shape[1]), np.arange(Image.shape[0])
+    X, Y = np.meshgrid(X,Y)
+
+    Figure, Axes = plt.subplots(subplot_kw={"projection": "3d"})
+    CBar = Axes.plot_surface(X,Y,Image, cmap=CMap)
+    if ColorBar:
+        plt.colorbar(CBar)
+    plt.title(Title)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
 def PrintTime(Tic, Toc):
     """
     Print elapsed time in seconds to time in HH:MM:SS format
@@ -837,11 +879,11 @@ class PCNNTools:
 
 # Set path
 CurrentDirectory = Path.cwd()
-ImageDirectory = CurrentDirectory / 'Tests/Osteons/BovineBone/'
+ImageDirectory = CurrentDirectory / 'Tests/Osteons/HumanBone/'
 
 # Open image to segment
-Image = sitk.ReadImage(str(ImageDirectory / 'Toluidinblue_protocol2B_20.jpg'))
-Image.SetSpacing(np.array([0.1225,0.1225])*2.5)  # Estimated from PixelSpacing.py
+Image = sitk.ReadImage(str(ImageDirectory / 'Staining2.jpg'))
+Image.SetSpacing(np.array([0.1225,0.1225]))  # Estimated from PixelSpacing.py
 
 OriginalSize = np.array(Image.GetSize())
 OriginalSpacing = np.array(Image.GetSpacing())
@@ -855,24 +897,38 @@ Resampler.SetOutputSpacing(NewSpacing)
 Resampler.SetSize(NewSize)
 Resampled_Image = Resampler.Execute(Image)
 
-Array = sitk.GetArrayFromImage(Resampled_Image)[:,:,:3]
-Array = np.round(NormalizeValues(Array) * 255).astype('uint8')
-PlotArray(Array, 'RGB Image')
-PlotChanels(Array, 'R', 'G', 'B')
-HSV = color.rgb2hsv(Array)
-PlotChanels(Array, 'H', 'S', 'V', CMap='hsv', CBar=True)
+RGB = sitk.GetArrayFromImage(Resampled_Image)[:,:,:3]
+RGB = np.round(NormalizeValues(RGB) * 255).astype('uint8')
+PlotArray(RGB, 'RGB')
+PlotChanels(RGB, 'RGB')
 
-Lab = color.rgb2lab(Array)
-PlotChanels(Array, 'L', 'a', 'b', CMap='lab', CBar=True)
+Lab = color.rgb2lab(RGB)
+Lab_Rescaled = (Lab + [0, 128, 128]) / [100, 255, 255]
+for i in range(3):
+    Lab_Rescaled[:,:,i] = (Lab_Rescaled[:,:,i] - Lab_Rescaled[:,:,i].min()) / \
+                          (Lab_Rescaled[:,:,i].max() - Lab_Rescaled[:,:,i].min())
+PlotChanels(Lab_Rescaled,'Lab')
 
 
-Red = Array[:,:,0]
-PlotHistogram(Red)
-v_min, v_max = np.percentile(Red, (10, 90))
-Stretched_Red = exposure.rescale_intensity(Red, in_range=(v_min, v_max))
-PlotArray(Stretched_Red,'Stretched')
-PlotHistogram(Stretched_Red)
+b = Lab_Rescaled[:,:,2]
+v_min, v_max = np.percentile(b, (10, 90))
+Stretched_b = exposure.rescale_intensity(b, in_range=(v_min, v_max), out_range=(b.min(),b.max()))
+PlotArray(Stretched_b,'Stretched')
 
+LabMask = np.repeat(1-Stretched_b,3).reshape(RGB.shape) * RGB
+PlotArray(np.round(LabMask).astype('int'), 'RGB')
+
+Lab_Rescaled[:,:,2] = Stretched_b
+Stretched_RGB = color.lab2rgb(Lab_Rescaled * [100, 255, 255] - [0, 128, 128])
+PlotArray(Stretched_RGB,'RGB Stretched')
+
+V = np.array([50,120,250])
+Norm = np.linalg.norm(Stretched_RGB - V, axis=2)
+v_min, v_max = np.percentile(Norm, (10, 90))
+Stretched_Norm = exposure.rescale_intensity(Norm, in_range=(v_min, v_max), out_range=(Norm.min(),Norm.max()))
+PlotArray(1-Stretched_Norm,'Norm')
+
+# Stretched_S = Stretched_ab
 
 Otsus = filters.threshold_multiotsu(Stretched_Red,classes=3)
 Binary = np.ones(Stretched_Red.shape)
@@ -882,6 +938,57 @@ PlotArray(Binary,'Otsu')
 
 
 PCNN = PCNNTools()
-PCNN.Set_Image(Stretched_Red)
-Segments = PCNN.SPCNN_Segmentation(Delta=1/2)
-Segment = PlotSegments(2-Segments,[2])
+PCNN.Set_Image(Stretched_b)
+Segments = PCNN.SPCNN_Segmentation(Delta=1/10)
+Segment = PlotSegments(Segments,[9]).astype('int')
+
+Bin = np.zeros(Segment.shape) + Segment
+Disk = morphology.disk(2)
+Bin_Dil = morphology.binary_dilation(Bin, Disk)
+Bin_Ero = morphology.binary_erosion(Bin_Dil, Disk)
+PlotArray(Bin_Ero, 'title')
+
+# Filter by FFT
+FFT = np.fft.fft2(Stretched_b)
+Figure, Axis = plt.subplots(1,1)
+Axis.imshow(np.log(1+np.abs(FFT)), cmap='gray')
+plt.show()
+
+# Build filter
+FFT_Filter = np.ones(FFT.shape)
+FFT_Filter[int(FFT.shape[0]/2),int(FFT.shape[1]/2)] = 0
+MedialAxis, Distances = morphology.medial_axis(FFT_Filter, return_distance=True)
+NormDistances = Distances / Distances.max()
+
+C1, C2 = 20, 0.1
+SigDistances = 1 / (1 + np.exp(-C1 * (NormDistances - C2)))
+SigDistances = (SigDistances - SigDistances.min()) / (SigDistances.max() - SigDistances.min())
+PlotSurface(SigDistances, 'Distances')
+# PlotArray(SigDistances, 'Distances')
+
+
+Center = np.fft.fftshift(FFT)
+# PlotArray(np.log(1+np.abs(Center)), 'Center')
+
+LowPassCenter = Center * (1-SigDistances)
+# PlotArray(np.log(1+np.abs(LowPassCenter)), 'LowPassCenter')
+
+LowPass = np.fft.ifftshift(LowPassCenter)
+# PlotArray(np.log(1+np.abs(LowPass)), 'LowPass')
+
+iFFT = np.abs(np.fft.ifft2(LowPass))
+PlotArray(iFFT,'title')
+
+
+Disk = morphology.disk(5)
+Filtered = filters.median(Stretched_b, Disk)
+PlotArray(Filtered, 'Filtered')
+
+PCNN.Set_Image(Filtered)
+Segments = PCNN.SPCNN_Segmentation(Delta=1/400)
+Segment = PlotSegments(Segments,[313]).astype('int')
+
+CSeg = np.repeat(1-Segment,3).reshape(RGB.shape) * RGB
+PlotArray(CSeg,'Seg')
+Norm = np.linalg.norm(CSeg - [255,255,255], axis=2)
+PlotArray(Norm,'Norm')
