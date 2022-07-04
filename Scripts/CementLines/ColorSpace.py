@@ -151,14 +151,6 @@ def NormalizeValues(Image):
     N_Image = (Image - Image.min()) / (Image.max()-Image.min())
 
     return N_Image
-def GaussianKernel(Length=5, Sigma=1.):
-    """
-    Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
-    """
-    Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
-    Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
-    Kernel = np.outer(Gauss, Gauss)
-    return Kernel / sum(sum(Kernel))
 def BetweenClassVariance(GrayScale, Segmented):
 
     Ignited_Neurons = Segmented == 1
@@ -227,7 +219,17 @@ class PCNNTools:
             self.Image3 = Image3
         return
 
+    def GaussianKernel(self, Length=5, Sigma=1.):
+        """
+        Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+        """
+        Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+        Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+        Kernel = np.outer(Gauss, Gauss)
 
+        self.Kernel = Kernel / sum(sum(Kernel))
+
+        return
 
     # Define PCNN functions
     def Histogram(self,NBins=256,Plot=False):
@@ -399,9 +401,7 @@ class PCNNTools:
         S = NormalizeValues(self.Image)
         Y = np.zeros(S.shape)
         T = np.zeros(S.shape)
-        W = np.array([[0.5, 1, 0.5],
-                      [1, 0, 1],
-                      [0.5, 1, 0.5]])
+        W = self.Kernel
         Theta = np.ones(S.shape)
 
         FiredNumber = 0
@@ -950,9 +950,7 @@ PlotArray(Bin_Ero, 'title')
 
 # Filter by FFT
 FFT = np.fft.fft2(Stretched_b)
-Figure, Axis = plt.subplots(1,1)
-Axis.imshow(np.log(1+np.abs(FFT)), cmap='gray')
-plt.show()
+# PlotArray(np.log(1+np.abs(FFT)), 'Center')
 
 # Build filter
 FFT_Filter = np.ones(FFT.shape)
@@ -960,15 +958,21 @@ FFT_Filter[int(FFT.shape[0]/2),int(FFT.shape[1]/2)] = 0
 MedialAxis, Distances = morphology.medial_axis(FFT_Filter, return_distance=True)
 NormDistances = Distances / Distances.max()
 
-C1, C2 = 20, 0.1
+
+C1, C2 = 50, 0.1
 SigDistances = 1 / (1 + np.exp(-C1 * (NormDistances - C2)))
 SigDistances = (SigDistances - SigDistances.min()) / (SigDistances.max() - SigDistances.min())
-PlotSurface(SigDistances, 'Distances')
-# PlotArray(SigDistances, 'Distances')
+# PlotSurface(SigDistances, 'Distances')
+PlotArray(SigDistances, 'Distances')
 
 
 Center = np.fft.fftshift(FFT)
 # PlotArray(np.log(1+np.abs(Center)), 'Center')
+
+
+SigDistances = np.ones(NormDistances.shape)
+SigDistances[NormDistances < 0.1] = 0
+PlotArray(SigDistances,'SigDistances')
 
 LowPassCenter = Center * (1-SigDistances)
 # PlotArray(np.log(1+np.abs(LowPassCenter)), 'LowPassCenter')
@@ -985,8 +989,11 @@ Filtered = filters.median(Stretched_b, Disk)
 PlotArray(Filtered, 'Filtered')
 
 PCNN.Set_Image(Filtered)
-Segments = PCNN.SPCNN_Segmentation(Delta=1/400)
-Segment = PlotSegments(Segments,[313]).astype('int')
+PCNN.GaussianKernel(20,1)
+Segments = PCNN.SPCNN_Segmentation(Delta=1/5, Beta=10)
+np.unique(Segments)
+PlotArray(Segments,'Segments',CMap='jet')
+Segment = PlotSegments(Segments,[0]).astype('int')
 
 CSeg = np.repeat(1-Segment,3).reshape(RGB.shape) * RGB
 PlotArray(CSeg,'Seg')
