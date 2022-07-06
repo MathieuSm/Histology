@@ -298,9 +298,10 @@ for j in range(5):
 
     # Random zone selection
     Size = int(round(1000 / PixelLength))
-    BVTV, CMDensity = np.zeros(1000), np.zeros(1000)
+    NSimulations = 1E3
+    BVTV, CMDensity = np.zeros(NSimulations), np.zeros(NSimulations)
     i = 0
-    while i < 1000:
+    while i < NSimulations:
         RandomXPos = int(np.random.uniform(int(Size/2) + 1, Array.shape[1] - int(Size/2) - 1))
         RandomYPos = int(np.random.uniform(int(Size/2) + 1, Array.shape[0] - int(Size/2) - 1))
 
@@ -325,8 +326,8 @@ for j in range(5):
 
 
     # Means
-    Means = np.zeros(1000)
-    for i in range(1000):
+    Means = np.zeros(NSimulations)
+    for i in range(NSimulations):
         Means[i] = np.mean(CMDensity[:i+1])
 
     ROINumber = 100
@@ -419,17 +420,21 @@ LMM.params[0]
 LMM.params[1]
 
 # Fit results
-MedialCurve0500 = 0.1061014048386727 + 0.32978012713848315 / (np.arange(len(MeansData))+1)
-MedialCurve1000 = 0.05142477003653866 + 0.8294294775342638 / (np.arange(len(MeansData))+1)
-MedialCurve1500 = 0.10499514381506228 + 0.6086221151450486 / (np.arange(len(MeansData))+1)
-MedialCurve2000 = 0.13443837628548178 + 0.4402865255409403 / (np.arange(len(MeansData))+1)
+MedialCurve0500 = 0.1061014048386727 + 0.32978012713848315 / (np.arange(NSimulations)+1)
+MedialCurve1000 = 0.05142477003653866 + 0.8294294775342638 / (np.arange(NSimulations)+1)
+MedialCurve1500 = 0.10499514381506228 + 0.6086221151450486 / (np.arange(NSimulations)+1)
+MedialCurve2000 = 0.13443837628548178 + 0.4402865255409403 / (np.arange(NSimulations)+1)
 MedialCurves = [MedialCurve0500, MedialCurve1000, MedialCurve1500, MedialCurve2000]
 
-LateralCurve0500 = 0.24594793990885896 + 0.7896431976544062 / (np.arange(len(MeansData))+1)
-LateralCurve1000 = 0.07224763136122508 + 1.40477214166528 / (np.arange(len(MeansData))+1)
-LateralCurve1500 = 0.10269523893867395 + 1.092066105802237 / (np.arange(len(MeansData))+1)
-LateralCurve2000 = 0.07483507798042248 + 0.9343716072050389 / (np.arange(len(MeansData))+1)
+LateralCurve0500 = 0.24594793990885896 + 0.7896431976544062 / (np.arange(NSimulations)+1)
+LateralCurve1000 = 0.07224763136122508 + 1.40477214166528 / (np.arange(NSimulations)+1)
+LateralCurve1500 = 0.10269523893867395 + 1.092066105802237 / (np.arange(NSimulations)+1)
+LateralCurve2000 = 0.07483507798042248 + 0.9343716072050389 / (np.arange(NSimulations)+1)
 LateralCurves = [LateralCurve0500, LateralCurve1000, LateralCurve1500, LateralCurve2000]
+
+Colors = [(1,0,0),(1,0,1),(0,0,1),(0,1,1),(0,1,0)]
+MaxROIs = 100
+PhysicalSizes = [100, 200, 500, 1000, 1500, 2000] # Grid size in um
 
 Figure, Axis = plt.subplots(1,1)
 for Index in range(len(MedialCurves)):
@@ -442,7 +447,7 @@ plt.legend()
 plt.show()
 
 Figure, Axis = plt.subplots(1,1)
-for Index in range(len(MedialCurves)):
+for Index in range(len(LateralCurves)):
     Axis.plot(LateralCurves[Index], color=Colors[Index], label=str(PhysicalSizes[Index+2]))
 Axis.set_xlabel('Number of ROIs [-]')
 Axis.set_ylabel('Fitted Curve [-]')
