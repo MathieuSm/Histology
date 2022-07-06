@@ -74,6 +74,9 @@ def PlotState(Positions, Velocities, Values, Ranges):
 
 def Main(Arguments, Plot=False):
 
+    Tic = time.time()
+    print('Run PSO algorithm')
+
     # Step 1: PSO initialization
     F = Arguments.Function
     Dim = len(Arguments.Ranges)
@@ -112,8 +115,6 @@ def Main(Arguments, Plot=False):
     Iteration = 0
     while Iteration < Arguments.MaxIt and GBV > Arguments.STC:
 
-        Tic = time.time()
-
         ## PSO step 3 - Update positions and velocities
         Omega = 0.9 - 0.5 * Iteration / Arguments.MaxIt  # Inertia factor
         V = Omega * V + C1 * (P_Best - X) + C2 * (G_Best - X)
@@ -147,12 +148,13 @@ def Main(Arguments, Plot=False):
         ## PSO step 5 - Update terminal conditions
         Iteration += 1
         print('Iteration number: ' + str(Iteration))
-        Toc = time.time()
-        PrintTime(Tic, Toc)
 
         # Plot
         if Plot:
             PlotState(X, V, VNew, Arguments.Ranges)
+
+    Toc = time.time()
+    PrintTime(Tic, Toc)
 
     return G_Best
 

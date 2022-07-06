@@ -5,12 +5,26 @@ import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
-from skimage import morphology
+from skimage import morphology, color
 import time
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 import PSO
+from Filtering import FFT2D
 
+def PlotArray(Array, Title, CMap='gray', ColorBar=False):
+
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+    CBar = Axes.imshow(Array, cmap=CMap)
+    if ColorBar:
+        plt.colorbar(CBar)
+    plt.title(Title)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
 
 # Set path and variables
 CurrentDirectory = Path.cwd()
@@ -100,6 +114,9 @@ Array = sitk.GetArrayFromImage(Image)[:,:,:3][Area[0][0]:Area[0][1],Area[1][0]:A
 Figure, Axis = plt.subplots(1,1)
 Axis.imshow(Array)
 plt.show()
+
+Lab = color.rgb2lab(Array)
+Image = Lab[:,:,2]
 
 def PrintTime(Tic, Toc):
     """
@@ -199,17 +216,16 @@ def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
 
     return Output
 
-def Function2Optimize(Parameters=np.array([1,1,1,2,1/255])):
+def Function2Optimize(Parameters=np.array([2,1/255])):
 
-    R, G, B, Beta, Delta = Parameters
-    Gray = R * Array[:,:,0] + G * Array[:,:,1] + B * Array[:,:,2]
-    Segmented = SPCNN(Gray, Beta, Delta)
+    Beta, Delta = Parameters
+    Segmented = SPCNN(Image, Beta, Delta)
     Values = np.unique(Segmented)
     DCs = np.zeros(len(Values))
     i = 0
     for Value in Values:
         Bin = (Segmented == Value) * 1
-        PlotArray(Bin, str(i))
+        PlotArray(Bin,'Segmented Image')
         DCs[i] = 2*np.sum(Bin * Skeleton) / (Bin.sum() + Skeleton.sum())
         i += 1
 
@@ -218,7 +234,7 @@ def Function2Optimize(Parameters=np.array([1,1,1,2,1/255])):
 class Arguments:
     pass
 Arguments.Function = Function2Optimize
-Arguments.Ranges = np.array([[0,1],[0,1],[0,1],[0,4],[1/255,1.]])
+Arguments.Ranges = np.array([[0,4],[1/255,1.]])
 Arguments.Population = 20
 Arguments.Cs = [0.1,0.1]
 Arguments.MaxIt = 10
@@ -226,3 +242,5 @@ Arguments.STC = 1E-3
 Parameters = PSO.Main(Arguments)
 
 Function2Optimize(Parameters)
+
+Filtered = FFT2D(Array[:,:,0],CutOff=1/10,Sharpness=50,PassType='Low')
