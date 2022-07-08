@@ -82,7 +82,7 @@ def FFT2D(Image,CutOff,Sharpness,PassType,Plot=False):
     # Apply filter
     LowPassCenter = Center * Filter
     LowPass = np.fft.ifftshift(LowPassCenter)
-    Filtered = np.abs(np.fft.ifft2(LowPass))
+    Filtered = 1 - np.abs(np.fft.ifft2(LowPass))
 
     if Plot:
         Figure, Axes = plt.subplots(1, 1)

@@ -116,7 +116,9 @@ Axis.imshow(Array)
 plt.show()
 
 Lab = color.rgb2lab(Array)
-Image = Lab[:,:,2]
+PlotArray(Lab[:,:,1],'Original Image')
+Filtered = FFT2D(Lab[:,:,1],CutOff=1/10,Sharpness=50,PassType='Low')
+PlotArray(Filtered,'Filtered Image')
 
 def PrintTime(Tic, Toc):
     """
@@ -143,9 +145,10 @@ def NormalizeValues(Image):
     N_Image = (Image - Image.min()) / (Image.max()-Image.min())
 
     return N_Image
-def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
+
+def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=100):
     """
-    Segment image using simplified PCNN, single neuron firing and fast linking implementation
+    Segment image using single neuron firing and fast linking implementation
     Based on:
     Zhan, K., Shi, J., Wang, H. et al.
     Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
@@ -154,8 +157,7 @@ def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
 
     :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
     :param Delta: Linear decay factor for threshold level
-    :param VT: Dynamic threshold amplitude
-    :param Nl_max: Max number of iteration for fast linking
+    :param Vt: Dynamic threshold amplitude
     :return: H: Image histogram in numpy array
     """
 
@@ -164,12 +166,15 @@ def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
 
     # Initialize parameters
     S = NormalizeValues(Image)
-    Y = np.zeros(S.shape)
-    T = np.zeros(S.shape)
+    Rows, Columns = S.shape
+    F = np.zeros((Rows, Columns))
+    L = np.zeros((Rows, Columns))
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
     W = np.array([[0.5, 1, 0.5],
                   [1, 0, 1],
                   [0.5, 1, 0.5]])
-    Theta = np.ones(S.shape)
+    Theta = np.ones((Rows, Columns))
 
     FiredNumber = 0
     N = 0
@@ -177,32 +182,13 @@ def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
 
     # Perform segmentation
     while Condition:
-
         N += 1
-        F = S
-        L = correlate(Y, W, output='float', mode='reflect')
-        Theta = Theta - Delta + VT * Y
+        F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
+        L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+        Theta = Theta * np.exp(-AlphaT) + VT * Y
 
-        if FastLinking:
-            Fire = 1
-            Nl = 0
-            while Fire == 1:
-
-                Q = Y
-                U = F * (1 + Beta * L)
-                Y = (U > Theta) * 1
-                if np.array_equal(Q, Y):
-                    Fire = 0
-                else:
-                    L = correlate(Y, W, output='float', mode='reflect')
-
-                Nl += 1
-                if Nl > Nl_max:
-                    print('Fast linking too long, stopped')
-                    break
-        else:
-            U = F * (1 + Beta * L)
-            Y = (U > Theta) * 1
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
 
         T = T + N * Y
         FiredNumber = FiredNumber + sum(sum(Y))
@@ -216,16 +202,15 @@ def SPCNN(Image, Beta=2, Delta=1/255, VT=100, FastLinking=False, Nl_max=1E4):
 
     return Output
 
-def Function2Optimize(Parameters=np.array([2,1/255])):
+def Function2Optimize(Parameters=np.array([2.,1.,0.5,1.,0.5,0.05])):
 
-    Beta, Delta = Parameters
-    Segmented = SPCNN(Image, Beta, Delta)
+    Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
+    Segmented = PCNN(Filtered, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
     Values = np.unique(Segmented)
     DCs = np.zeros(len(Values))
     i = 0
     for Value in Values:
         Bin = (Segmented == Value) * 1
-        PlotArray(Bin,'Segmented Image')
         DCs[i] = 2*np.sum(Bin * Skeleton) / (Bin.sum() + Skeleton.sum())
         i += 1
 
@@ -234,13 +219,28 @@ def Function2Optimize(Parameters=np.array([2,1/255])):
 class Arguments:
     pass
 Arguments.Function = Function2Optimize
-Arguments.Ranges = np.array([[0,4],[1/255,1.]])
+Arguments.Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-2,1]])
 Arguments.Population = 20
 Arguments.Cs = [0.1,0.1]
 Arguments.MaxIt = 10
 Arguments.STC = 1E-3
 Parameters = PSO.Main(Arguments)
 
-Function2Optimize(Parameters)
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
+Segmented = PCNN(Filtered, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+Values = np.unique(Segmented)
+DCs = np.zeros(len(Values))
+i = 0
+for Value in Values:
+    Bin = (Segmented == Value) * 1
+    DCs[i] = 2 * np.sum(Bin * Skeleton) / (Bin.sum() + Skeleton.sum())
+    i += 1
 
-Filtered = FFT2D(Array[:,:,0],CutOff=1/10,Sharpness=50,PassType='Low')
+Bin = (Segmented == Values[DCs.argmax()]) * 1
+PlotArray(Bin,'Segment ' + str(DCs.argmax()))
+
+PlotArray(Skeleton, 'Skeleton')
+
+Filtered_b = 0.02644803
+nonFiltered_b = 0.06711096
+nonFiltered_a = 0.07100479
