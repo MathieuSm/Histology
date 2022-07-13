@@ -121,11 +121,21 @@ for PhysicalSize in PhysicalSizes:
             SubRegion = Skeleton[YGrid[j,i]:YGrid[j+1,i],XGrid[j,i]:XGrid[j,i+1]]
             SubBone = Bone[YGrid[j,i]:YGrid[j+1,i],XGrid[j,i]:XGrid[j,i+1]]
 
+            """
+            Consider cortical ROI valid only if BV/TV is higher than 88%. According to:
+            
+            Grimal, Q., Raum, K., Gerisch, A., &#38; Laugier, P. (2011)
+            A determination of the minimum sizes of representative volume elements
+            for the prediction of cortical bone elastic properties
+            Biomechanics and Modeling in Mechanobiology (6), 925–937
+            https://doi.org/10.1007/s10237-010-0284-9
+            """
+
             # Figure, Axis = plt.subplots(1, 1)
             # Axis.imshow(SubRegion)
             # plt.show()
 
-            if SubBone.sum() > 0:
+            if SubBone.sum() > 0.88:
                 Densities[j,i] = SubRegion.sum() / SubBone.sum()
             else:
                 Densities[j,i] = 0
@@ -185,7 +195,7 @@ DensityData.to_csv(str(ImageDirectory / str(Name[:-7] + 'Densities.csv')), index
 
 
 # Collect densities data to compare between samples
-Samples = DataFrame[DataFrame['Cortex'] == 'Lateral']
+Samples = DataFrame[DataFrame['Cortex'] == 'Medial']
 Data100 = pd.DataFrame()
 Data200 = pd.DataFrame()
 Data500 = pd.DataFrame()
@@ -235,16 +245,16 @@ for Data in Datas:
 
 
 # Simulate random zone selection
-Data = Datas[5]
+Data = Datas[3]
 MeansData = pd.DataFrame()
 
-for j in range(5):
-    M = Data[Data.columns[j]].mean()
-    S = Data[Data.columns[j]].std()
+for i in range(5):
+    M = Data[Data.columns[i]].mean()
+    S = Data[Data.columns[i]].std()
 
 
     # Open image to segment
-    Image = sitk.ReadImage(str(ImageDirectory / str(Data.columns[j] + '_Seg.jpg')))
+    Image = sitk.ReadImage(str(ImageDirectory / str(Data.columns[i] + '_Seg.jpg')))
     Array = sitk.GetArrayFromImage(Image)[:,:,:3]
 
     # Figure, Axis = plt.subplots(1,1)
@@ -298,27 +308,59 @@ for j in range(5):
 
     # Random zone selection
     Size = int(round(1000 / PixelLength))
-    NSimulations = 1E3
-    BVTV, CMDensity = np.zeros(NSimulations), np.zeros(NSimulations)
-    i = 0
-    while i < NSimulations:
-        RandomXPos = int(np.random.uniform(int(Size/2) + 1, Array.shape[1] - int(Size/2) - 1))
-        RandomYPos = int(np.random.uniform(int(Size/2) + 1, Array.shape[0] - int(Size/2) - 1))
+    ROINumber = 10
+    BVTV = np.zeros((ROINumber,ROINumber))
+    CMDensity = np.zeros((ROINumber,ROINumber))
+    j = 1
+    while j < ROINumber+1:
 
-        SubRegion = Skeleton[RandomYPos - int(Size/2):RandomYPos + int(Size/2),
-                             RandomXPos - int(Size/2):RandomXPos + int(Size/2)]
-        SubBone = Bone[RandomYPos - int(Size/2):RandomYPos + int(Size/2),
-                       RandomXPos - int(Size/2):RandomXPos + int(Size/2)]
+        # To plot simulation results
+        Figure, Axis = plt.subplots(1,1)
+        Axis.imshow(Array)
 
-        if SubRegion.sum() > 1E-4:
-            BVTV[i] = SubBone.sum() / SubBone.size
-            CMDensity[i] = SubRegion.sum() / SubBone.sum()
-            i += 1
+        for k in range(j):
+            RandomXPos = int((k+1) * Array.shape[1] / (j+1) + np.random.randn() * Size/4)
+            RandomYPos = int(np.random.uniform(Size / 2 + 1, Array.shape[0] - Size / 2 - 1))
+
+            X1, X2 = RandomXPos - int(Size / 2), RandomXPos + int(Size / 2)
+            Y1, Y2 = RandomYPos - int(Size / 2), RandomYPos + int(Size / 2)
+
+            SubRegion = Skeleton[Y1:Y2, X1:X2]
+            SubBone = Bone[Y1:Y2, X1:X2]
+
+            BoneFraction = SubBone.sum() / SubBone.size
+
+            while BoneFraction < 0.5:
+                RandomXPos = int((k+1) * Array.shape[1] / (j+1) + np.random.randn() * Size/2)
+                RandomYPos = int(np.random.uniform(Size / 2 + 1, Array.shape[0] - Size / 2 - 1))
+
+                X1, X2 = RandomXPos - int(Size / 2), RandomXPos + int(Size / 2)
+                Y1, Y2 = RandomYPos - int(Size / 2), RandomYPos + int(Size / 2)
+
+                SubRegion = Skeleton[Y1:Y2,X1:X2]
+                SubBone = Bone[Y1:Y2,X1:X2]
+
+                BoneFraction = SubBone.sum() / SubBone.size
+
+            Axis.plot([X1,X2],[Y1,Y1],color=(1,0,0))
+            Axis.plot([X2,X2],[Y1,Y2],color=(1,0,0))
+            Axis.plot([X2,X1],[Y2,Y2],color=(1,0,0))
+            Axis.plot([X1,X1],[Y2,Y1],color=(1,0,0))
+
+            BVTV[j-1,k] = BoneFraction
+            CMDensity[j-1,k] = SubRegion.sum() / SubBone.sum()
+
+        plt.show()
+        j += 1
+
+    Filter = BVTV == 0
+    BVTV[Filter] = np.nan
+    CMDensity[Filter] = np.nan
 
     Figure, Axis = plt.subplots(1,1)
-    Axis.plot(BVTV,CMDensity, color=(1,0,0), marker='o', fillstyle='none', linestyle='none', label='Tests')
-    Axis.plot([BVTV.min(), BVTV.max()], [M, M], color=(0,0,0), linestyle='--', label='Grid Mean')
-    Axis.fill_between([BVTV.min(), BVTV.max()],[M + S, M + S],[M - S, M - S], color=(0,0,0,0.2), label='Standard deviation')
+    Axis.plot(BVTV.flatten(),CMDensity.flatten(), color=(1,0,0), marker='o', fillstyle='none', linestyle='none', label='Tests')
+    Axis.plot([0, np.nanmax(BVTV)], [M, M], color=(0,0,0), linestyle='--', label='Grid Mean')
+    Axis.fill_between([0, np.nanmax(BVTV)],[M + S, M + S],[M - S, M - S], color=(0,0,0,0.2), label='Standard deviation')
     Axis.set_xlabel('BV/TV (-)')
     Axis.set_ylabel('Density (-)')
     plt.legend()
@@ -326,15 +368,13 @@ for j in range(5):
 
 
     # Means
-    Means = np.zeros(NSimulations)
-    for i in range(NSimulations):
-        Means[i] = np.mean(CMDensity[:i+1])
-
-    ROINumber = 100
+    Means = np.nanmean(CMDensity,axis=1)
 
     Figure, Axis = plt.subplots(1,1)
-    Axis.plot(np.arange(1,ROINumber+1),CMDensity[:ROINumber] / M - 1, color=(1,0,0), marker='o', fillstyle='none', linestyle='none', label='Tests')
-    Axis.plot(np.arange(1,ROINumber+1),Means[:ROINumber] / M - 1, color=(0,0,1), linestyle='--', label='ROIs Mean')
+    for j in range(ROINumber):
+        Axis.plot(np.repeat(j+1,ROINumber),CMDensity[j,:] / M - 1, color=(1,0,0), marker='o', fillstyle='none', linestyle='none')
+    Axis.plot([], color=(1, 0, 0), marker='o', fillstyle='none', linestyle='none', label='Tests')
+    Axis.plot(np.arange(1,ROINumber+1),Means / M - 1, color=(0,0,1), linestyle='--', label='ROIs Mean')
     Axis.plot([1, ROINumber], [0, 0], color=(0,0,0), linestyle='--', label='Grid Mean')
     Axis.fill_between([1, ROINumber],[S/M, S/M],[-S/M, -S/M], color=(0,0,0,0.15), label='Standard deviation')
     Axis.set_xlabel('ROI number (-)')
@@ -342,7 +382,7 @@ for j in range(5):
     plt.legend(loc='upper center', ncol=2, bbox_to_anchor=(0.5,1.15))
     plt.show()
 
-    MeansData[Data.columns[j]] = Means / M - 1
+    MeansData[Data.columns[i]] = Means / M - 1
 
 
 Colors = [(1,0,0),(1,0,1),(0,0,1),(0,1,1),(0,1,0)]
