@@ -22,6 +22,14 @@ Description = """
 
 # # For testing purposes
 # class Arguments:
+#
+#     def __init__(self):
+#         Arguments.Ranges = np.array([[-1, 1], [-1, 1]])
+#         Arguments.Population = 20
+#         Arguments.Cs = [0.1, 0.1]
+#         Arguments.MaxIt = 10
+#         Arguments.STC = 1E-3
+#
 #     def Function(self):
 #         """
 #         Function to find center of a coordinate system (test)
@@ -30,13 +38,7 @@ Description = """
 #         """
 #         P1, P2 = self
 #         return P1**2 + P2**2
-#     pass
-#
-# Arguments.Ranges = np.array([[-1,1],[-1,1]])
-# Arguments.Population = 20
-# Arguments.Cs = [0.1,0.1]
-# Arguments.MaxIt = 10
-# Arguments.STC = 1E-3
+
 
 def PrintTime(Tic, Toc):
     """
@@ -71,8 +73,10 @@ def PlotState(Positions, Velocities, Values, Ranges):
     Axes.set_ylim(Ranges[1]*1.5)
     plt.legend(loc='upper center', ncol=2, bbox_to_anchor=(0.5,1.17))
     plt.show()
+def PlotEvolution(Xs, G_Bests, GBVs):
 
-def Main(Arguments, Plot=False):
+
+def Main(Arguments, Plot=False, Evolution=False):
 
     Tic = time.time()
     print('Run PSO algorithm')
@@ -103,6 +107,12 @@ def Main(Arguments, Plot=False):
     GBV = VInit.min()
     GBI = np.where(VInit == GBV)[0][0]
     G_Best = X[GBI]
+
+    # Store values history
+    if Evolution:
+        Xs = X.copy
+        G_Bests = G_Best.copy()
+        GBVs = GBV
 
     PBV = VInit.copy()
     P_Best = X.copy()
@@ -149,10 +159,21 @@ def Main(Arguments, Plot=False):
         Iteration += 1
         print('Iteration number: ' + str(Iteration))
 
+        # Store values history
+        if Evolution:
+            Xs = np.hstack([Xs, X])
+            G_Bests = np.hstack([G_Bests, G_Best])
+            GBVs = np.append(GBVs, GBV)
+
         # Plot
         if Plot:
             PlotState(X, V, VNew, Arguments.Ranges)
 
+    if Evolution:
+        PlotEvolution(Xs, G_Bests, GBVs)
+
+    # Print time elapsed
+    print('Optimization ended')
     Toc = time.time()
     PrintTime(Tic, Toc)
 

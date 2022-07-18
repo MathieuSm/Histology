@@ -645,7 +645,7 @@ for Index in range(len(MedialCurves)):
 Axis.set_xlabel('Number of ROIs [-]')
 Axis.set_ylabel('Fitted Curve [-]')
 Axis.set_xlim([0, ROINumber+1])
-# Axis.set_ylim([0, 1.5])
+Axis.set_ylim([0, 1])
 plt.legend()
 plt.show()
 
@@ -655,6 +655,6 @@ for Index in range(len(LateralCurves)):
 Axis.set_xlabel('Number of ROIs [-]')
 Axis.set_ylabel('Fitted Curve [-]')
 Axis.set_xlim([0, ROINumber+1])
-Axis.set_ylim([0, 1.5])
+Axis.set_ylim([0, 1])
 plt.legend()
 plt.show()

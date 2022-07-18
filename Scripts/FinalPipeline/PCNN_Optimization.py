@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+
+import sys
+import time
+import numpy as np
+import pandas as pd
+import SimpleITK as sitk
+from pathlib import Path
+import matplotlib.pyplot as plt
+from scipy.ndimage import correlate
+from skimage import morphology, measure, color
+
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+
+import PSO
+
+plt.rc('font', size=12)
+
+Version = '01'
+
+# Define the script description
+Description = """
+    Script used to determine size and number of ROI for the cement lines analysis
+
+    Based on recomendation from:
+    Grimal, Q., Raum, K., Gerisch, A., &#38; Laugier, P. (2011)
+    A determination of the minimum sizes of representative volume elements
+    for the prediction of cortical bone elastic properties
+    Biomechanics and Modeling in Mechanobiology (6), 925–937
+    https://doi.org/10.1007/s10237-010-0284-9
+
+    Author: Mathieu Simon
+            ARTORG Center for Biomedical Engineering Research
+            SITEM Insel
+            University of Bern
+
+    Date: July 2022
+    """
+
+
+class Parameters:
+
+    def __init__(self, ImageNumber, Threshold=0.88):
+        self.N = ImageNumber
+        self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
+        self.Threshold = Threshold
+
+class PSOArgs:
+
+    def __init__(self, Function2Optimize, Ranges, Population, Cs):
+        self.Function = Function2Optimize
+        self.Ranges = Ranges
+        self.Population = Population
+        self.Cs = Cs
+        self.MaxIt = 10
+        self.STC = 1E-3
+
+
+def PlotArray(Array, Title, CMap='gray', ColorBar=False):
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
+    CBar = Axes.imshow(Array, cmap=CMap)
+    if ColorBar:
+        plt.colorbar(CBar)
+    plt.title(Title)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+    plt.close(Figure)
+
+    return
+
+
+def PrintTime(Tic, Toc):
+    """
+    Print elapsed time in seconds to time in HH:MM:SS format
+    :param Tic: Actual time at the beginning of the process
+    :param Toc: Actual time at the end of the process
+    """
+
+    Delta = Toc - Tic
+
+    Hours = np.floor(Delta / 60 / 60)
+    Minutes = np.floor(Delta / 60) - 60 * Hours
+    Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
+
+    print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+
+
+def PixelSize(Image, Length, Plot=False):
+    """
+    Determine physical size of a pixel
+    :param Image: Image region containing the scalebar as numpy array r x c x 3
+    :param Length: Physical length of the scalebar as integer
+    :param Plot: Plot intermediate results, boolean value
+    :return: Physical size of a pixel
+    """
+
+    Tic = time.time()
+    print('Compute physical pixel size ...')
+
+    Filter1 = Image[:, :, 0] < 100
+    Filter2 = Image[:, :, 1] < 100
+    Filter3 = Image[:, :, 2] < 100
+
+    Bin = np.zeros(Filter1.shape, 'int')
+    Bin[Filter1 & Filter2 & Filter3] = 1
+
+    if Plot:
+        Figure, Axis = plt.subplots(1, 1)
+        Axis.imshow(Bin, cmap='binary')
+        plt.show()
+
+    RegionProps = measure.regionprops(Bin)[0]
+    Pixels = RegionProps.coords[:, 1].max() - RegionProps.coords[:, 1].min()
+    PixelLength = Length / Pixels
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return PixelLength
+
+
+def ReadImage(Params, Plot=True):
+    # Read image and plot it
+    Directory = Params.Directory
+    DataFrame = pd.read_csv(str(Directory / 'Data.csv'))
+    SampleData = DataFrame.loc[Params.N]
+    Name = str(str(SampleData['Sample']) + SampleData['Side'][0] + SampleData['Cortex'][0] + '.jpg')
+    Image = sitk.GetArrayFromImage(sitk.ReadImage(str(Directory / Name)))[:, :, :3]
+    Name = Name[:-4] + '_Seg.jpg'
+    SegImage = sitk.GetArrayFromImage(sitk.ReadImage(str(Directory / Name)))[:, :, :3]
+
+    if Plot:
+        Shape = np.array(Image.shape[:-1]) / 1000
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Store name, image, and pixel length in parameters class
+    Params.Name = Name[:-7]
+    Params.Image = Image
+    Params.SegImage = SegImage
+
+    if Params.Name[:5] == '418RM':
+        Params.PixelLength = PixelSize(Params.Image[9400:-400, 12500:-300], 2000, Plot=True)
+    else:
+        Params.PixelLength = 1.0460251046025104  # Computed with 418 RM
+
+
+def SegmentBone(Image, Plot=False):
+    """
+    Segment bone structure
+    :param Image: RGB numpy array dim r x c x 3
+    :param Plot: 'Full' or 'Sub' to plot intermediate results
+    :param SubArea: Indices to plot smaller image of intermediate results
+    :return: Labelled bone image
+    """
+
+    Tic = time.time()
+    print('Segment bone area ...')
+
+    # Mark areas where there is bone
+    Filter1 = Image[:, :, 0] < 190
+    Filter2 = Image[:, :, 1] < 190
+    Filter3 = Image[:, :, 2] < 235
+    Bone = Filter1 & Filter2 & Filter3
+
+    if Plot:
+        Shape = np.array(Image.shape) / max(Image.shape) * 10
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Bone, cmap='binary')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Erode and dilate to remove small bone parts
+    Disk = morphology.disk(2)
+    Dilated = morphology.binary_dilation(Bone, Disk)
+    Bone = morphology.binary_erosion(Dilated, Disk)
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Bone
+
+
+def ExtractSkeleton(Image, Plot=False):
+    """
+    Extract skeleton of manually segmented image
+    :param Image: Numpy image dim r x c x 3
+    :param Plot: 'Full' or 'Sub' to plot intermediate results
+    :param SubArea: Indices to plot smaller image of intermediate results
+    :return: Skeleton of the segmentation
+    """
+
+    Tic = time.time()
+    print('Extract manual segmentation skeleton ...')
+
+    Filter1 = Image[:, :, 0] > 100
+    Filter2 = Image[:, :, 1] < 90
+    Filter3 = Image[:, :, 2] < 150
+
+    Bin = np.zeros(Filter1.shape)
+    Bin[Filter1 & Filter2 & Filter3] = 1
+
+    # Dilate to link extracted segmentation
+    Disk = morphology.disk(5)
+    BinDilate = morphology.binary_dilation(Bin, Disk)
+
+    # Skeletonize to obtain 1 pixel thickness
+    Skeleton = morphology.skeletonize(BinDilate)
+
+    if Plot:
+        Shape = np.array(Image.shape) / max(Image.shape) * 10
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Shape = np.array(Skeleton.shape) / max(Skeleton.shape) * 10
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Skeleton, cmap='binary')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Skeleton
+
+
+def NormalizeValues(Image):
+    """
+    Normalize image values, used in PCNN for easier parameters handling
+    :param Image: Original grayscale image
+    :return: N_Image: Image with 0,1 normalized values
+    """
+
+    N_Image = (Image - Image.min()) / (Image.max() - Image.min())
+
+    return N_Image
+
+
+def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=100):
+    """
+    Segment image using single neuron firing and fast linking implementation
+    Based on:
+    Zhan, K., Shi, J., Wang, H. et al.
+    Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+    Arch Computat Methods Eng 24, 573–588 (2017).
+    https://doi.org/10.1007/s11831-016-9182-3
+
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param Delta: Linear decay factor for threshold level
+    :param Vt: Dynamic threshold amplitude
+    :return: H: Image histogram in numpy array
+    """
+
+    Tic = time.time()
+    print('\nImage segmentation...')
+
+    # Initialize parameters
+    S = NormalizeValues(Image)
+    Rows, Columns = S.shape
+    F = np.zeros((Rows, Columns))
+    L = np.zeros((Rows, Columns))
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
+    W = np.array([[0.5, 1, 0.5],
+                  [1, 0, 1],
+                  [0.5, 1, 0.5]])
+    Theta = np.ones((Rows, Columns))
+
+    FiredNumber = 0
+    N = 0
+    Condition = FiredNumber < S.size
+
+    # Perform segmentation
+    while Condition:
+        N += 1
+        F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
+        L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+        Theta = Theta * np.exp(-AlphaT) + VT * Y
+
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+
+        T = T + N * Y
+        FiredNumber = FiredNumber + sum(sum(Y))
+        Condition = FiredNumber < S.size
+
+    Output = 1 - NormalizeValues(T)
+
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Output
+
+
+def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.05])):
+
+    Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
+    Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+    Values = np.unique(Segmented)
+    DensityDiff = np.zeros(len(Values))
+    for Index, Value in enumerate(Values):
+        Bin = (Segmented == Value) * 1
+        DensityDiff[Index] = abs(Params.Reference - Bin.sum() / Bin.size)
+
+    Params.SegMin = DensityDiff.argmin()
+    return DensityDiff.min()
+
+
+# Read Image
+Params = Parameters(2)
+ReadImage(Params)
+
+# Segment bone and extract coordinate
+Bone = SegmentBone(Params.SegImage, Plot='Full')
+Y, X = np.where(Bone)
+
+# Set ROI pixel size
+PhysicalSize = 1000
+GridSize = int(round(PhysicalSize / Params.PixelLength))
+
+# Filter positions too close to the border
+F1 = X > GridSize / 2
+F2 = X < Bone.shape[1] - GridSize / 2
+FilteredX = X[F1 & F2]
+
+F1 = Y > GridSize / 2
+F2 = Y < Bone.shape[0] - GridSize / 2
+FilteredY = Y[F1 & F2]
+
+# Extract random ROI and verify validity
+RandY, RandX = np.random.choice(FilteredY, 1)[0], np.random.choice(FilteredX, 1)[0]
+X1, X2 = RandX - int(GridSize / 2), RandX + int(GridSize / 2)
+Y1, Y2 = RandY - int(GridSize / 2), RandY + int(GridSize / 2)
+BoneROI = Bone[Y1:Y2, X1:X2]
+BVTV = BoneROI.sum() / BoneROI.size
+
+while BVTV < Params.Threshold:
+    RandY, RandX = np.random.choice(FilteredY, 1)[0], np.random.choice(FilteredX, 1)[0]
+    X1, X2 = RandX - int(GridSize / 2), RandX + int(GridSize / 2)
+    Y1, Y2 = RandY - int(GridSize / 2), RandY + int(GridSize / 2)
+    BoneROI = Bone[Y1:Y2, X1:X2]
+    BVTV = BoneROI.sum() / BoneROI.size
+
+# To plot simulation results
+Shape = np.array(Params.Image.shape[:-1]) / 1000
+Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+Axis.imshow(Params.Image)
+Axis.plot([X1, X2], [Y1, Y1], color=(1, 0, 0))
+Axis.plot([X2, X2], [Y1, Y2], color=(1, 0, 0))
+Axis.plot([X2, X1], [Y2, Y2], color=(1, 0, 0))
+Axis.plot([X1, X1], [Y2, Y1], color=(1, 0, 0))
+Axis.axis('off')
+plt.subplots_adjust(0, 0, 1, 1)
+plt.show()
+
+ROI = Params.Image[Y1:Y2, X1:X2]
+Shape = np.array(ROI.shape[:-1]) / max(ROI.shape[:-1]) * 10
+Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+Axis.imshow(ROI)
+Axis.axis('off')
+plt.subplots_adjust(0, 0, 1, 1)
+plt.show()
+
+# Extract manual segmentation and compute CM density
+Skeleton = ExtractSkeleton(Params.SegImage[Y1:Y2, X1:X2], Plot=True)
+Params.Reference = Skeleton.sum() / BoneROI.sum()
+
+# Convert ROI into gray scale image
+Lab = color.rgb2lab(ROI)
+PlotArray(Lab[:,:,1],'Original Image')
+Params.ROI = Lab[:,:,1]
+
+# Run PSO for PCNN parameters
+Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-2,1]])
+Population = 20
+Cs = [0.1, 0.1]
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs)
+PSOResults = PSO.Main(Arguments)
+
+# Plot results
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
+Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+Values = np.unique(Segmented)
+Bin = (Segmented == Values[Params.SegMin]) * 1
+PlotArray(Bin, 'Segment ' + str(Params.SegMin))
+
+Bin.sum() / Bin.size
+Params.Reference
+
+PlotArray(Skeleton, 'Skeleton')
