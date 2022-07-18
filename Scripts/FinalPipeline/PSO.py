@@ -20,24 +20,25 @@ Description = """
     Date: July 2022
     """
 
-# # For testing purposes
-# class Arguments:
-#
-#     def __init__(self):
-#         Arguments.Ranges = np.array([[-1, 1], [-1, 1]])
-#         Arguments.Population = 20
-#         Arguments.Cs = [0.1, 0.1]
-#         Arguments.MaxIt = 10
-#         Arguments.STC = 1E-3
-#
-#     def Function(self):
-#         """
-#         Function to find center of a coordinate system (test)
-#         :param self:
-#         :return: Euclidian norm
-#         """
-#         P1, P2 = self
-#         return P1**2 + P2**2
+# For testing purposes
+class Arguments:
+
+    def __init__(self):
+        Arguments.Ranges = np.array([[-1, 1], [-1, 1]])
+        Arguments.Population = 20
+        Arguments.Cs = [0.1, 0.1]
+        Arguments.MaxIt = 10
+        Arguments.STC = 1E-3
+
+    def Function(self, Parameters):
+        """
+        Function to find center of a coordinate system (test)
+        :param self:
+        :return: Euclidian norm
+        """
+        P1, P2 = Parameters
+        return P1**2 + P2**2
+Arguments = Arguments()
 
 
 def PrintTime(Tic, Toc):
@@ -73,8 +74,28 @@ def PlotState(Positions, Velocities, Values, Ranges):
     Axes.set_ylim(Ranges[1]*1.5)
     plt.legend(loc='upper center', ncol=2, bbox_to_anchor=(0.5,1.17))
     plt.show()
-def PlotEvolution(Xs, G_Bests, GBVs):
+def PlotEvolution(Xs, G_Bests, GBVs, Ranges):
 
+    for i in range(Xs.shape[-1]):
+        Figure, Axes = plt.subplots(1,1, figsize=(5.5,4.5))
+
+        Axes2 = Axes.twinx()
+        Axes2.plot(GBVs/GBVs.max(), color=(0,0,0), marker='o', markersize=5, linestyle='--', linewidth=1.5, label='Best Cost')
+        Axes2.set_ylabel('Relative cost')
+
+        for j in range(Xs.shape[-2]):
+            Color = plt.cm.winter((j+1) / Xs.shape[-2])
+            Axes.plot(Xs[:, j, i], marker='o', markersize=3, color=Color, linestyle='--', linewidth=1.5)
+        Axes.plot(G_Bests[:, i], marker='o', color=(1,0,0), label='Best Parameter')
+        Axes.plot([0, Xs.shape[0]],[Ranges[i,0],Ranges[i,0]], color=(0.6,0.6,0.6))
+        Axes.plot([0, Xs.shape[0]],[Ranges[i,1],Ranges[i,1]], color=(0.6,0.6,0.6))
+        Axes.set_xlabel('Iteration number')
+        Axes.set_ylabel('Parameter ' + str(i) + ' value')
+
+        Axes.legend(loc='upper left', bbox_to_anchor=(0,1.125))
+        Axes2.legend(loc='upper right', bbox_to_anchor=(1,1.125))
+        plt.subplots_adjust(0.2,0.15,0.85,0.9)
+        plt.show()
 
 def Main(Arguments, Plot=False, Evolution=False):
 
@@ -110,8 +131,8 @@ def Main(Arguments, Plot=False, Evolution=False):
 
     # Store values history
     if Evolution:
-        Xs = X.copy
-        G_Bests = G_Best.copy()
+        Xs = np.zeros((Arguments.MaxIt+1, X.shape[0], X.shape[1]))
+        G_Bests = np.zeros((Arguments.MaxIt+1, G_Best.shape[0]))
         GBVs = GBV
 
     PBV = VInit.copy()
@@ -124,6 +145,12 @@ def Main(Arguments, Plot=False, Evolution=False):
     ## Start loop
     Iteration = 0
     while Iteration < Arguments.MaxIt and GBV > Arguments.STC:
+
+        # Store values history
+        if Evolution:
+            Xs[Iteration] = + X
+            G_Bests[Iteration] += G_Best
+            GBVs = np.append(GBVs, GBV)
 
         ## PSO step 3 - Update positions and velocities
         Omega = 0.9 - 0.5 * Iteration / Arguments.MaxIt  # Inertia factor
@@ -159,18 +186,15 @@ def Main(Arguments, Plot=False, Evolution=False):
         Iteration += 1
         print('Iteration number: ' + str(Iteration))
 
-        # Store values history
-        if Evolution:
-            Xs = np.hstack([Xs, X])
-            G_Bests = np.hstack([G_Bests, G_Best])
-            GBVs = np.append(GBVs, GBV)
-
         # Plot
         if Plot:
             PlotState(X, V, VNew, Arguments.Ranges)
 
     if Evolution:
-        PlotEvolution(Xs, G_Bests, GBVs)
+        Xs[Iteration] = + X
+        G_Bests[Iteration] += G_Best
+        GBVs = np.append(GBVs, GBV)
+        PlotEvolution(Xs, G_Bests, GBVs, Arguments.Ranges)
 
     # Print time elapsed
     print('Optimization ended')

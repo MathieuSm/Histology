@@ -20,14 +20,8 @@ Version = '01'
 
 # Define the script description
 Description = """
-    Script used to determine size and number of ROI for the cement lines analysis
-
-    Based on recomendation from:
-    Grimal, Q., Raum, K., Gerisch, A., &#38; Laugier, P. (2011)
-    A determination of the minimum sizes of representative volume elements
-    for the prediction of cortical bone elastic properties
-    Biomechanics and Modeling in Mechanobiology (6), 925–937
-    https://doi.org/10.1007/s10237-010-0284-9
+    Script used to optimize PCNN parameters and obtain good cement line density
+    correlation between manual and automatic segmentation
 
     Author: Mathieu Simon
             ARTORG Center for Biomedical Engineering Research
