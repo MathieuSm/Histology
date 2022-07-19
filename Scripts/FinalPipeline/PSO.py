@@ -87,8 +87,8 @@ def PlotEvolution(Xs, G_Bests, GBVs, Ranges):
             Color = plt.cm.winter((j+1) / Xs.shape[-2])
             Axes.plot(Xs[:, j, i], marker='o', markersize=3, color=Color, linestyle='--', linewidth=1.5)
         Axes.plot(G_Bests[:, i], marker='o', color=(1,0,0), label='Best Parameter')
-        Axes.plot([0, Xs.shape[0]],[Ranges[i,0],Ranges[i,0]], color=(0.6,0.6,0.6))
-        Axes.plot([0, Xs.shape[0]],[Ranges[i,1],Ranges[i,1]], color=(0.6,0.6,0.6))
+        Axes.plot([0, len(GBVs)-1],[Ranges[i,0],Ranges[i,0]], color=(0.7,0.7,0.7))
+        Axes.plot([0, len(GBVs)-1],[Ranges[i,1],Ranges[i,1]], color=(0.7,0.7,0.7))
         Axes.set_xlabel('Iteration number')
         Axes.set_ylabel('Parameter ' + str(i) + ' value')
 
@@ -148,7 +148,7 @@ def Main(Arguments, Plot=False, Evolution=False):
 
         # Store values history
         if Evolution:
-            Xs[Iteration] = + X
+            Xs[Iteration] += X
             G_Bests[Iteration] += G_Best
             GBVs = np.append(GBVs, GBV)
 
@@ -191,13 +191,16 @@ def Main(Arguments, Plot=False, Evolution=False):
             PlotState(X, V, VNew, Arguments.Ranges)
 
     if Evolution:
-        Xs[Iteration] = + X
+        Xs[Iteration] += X
         G_Bests[Iteration] += G_Best
         GBVs = np.append(GBVs, GBV)
-        PlotEvolution(Xs, G_Bests, GBVs, Arguments.Ranges)
+
+        Xs[Iteration + 1:] = np.nan
+        G_Bests[Iteration + 1:] = np.nan
+        PlotEvolution(Xs, G_Bests, GBVs[1:], Arguments.Ranges)
 
     # Print time elapsed
-    print('Optimization ended')
+    print('\nOptimization ended')
     Toc = time.time()
     PrintTime(Tic, Toc)
 

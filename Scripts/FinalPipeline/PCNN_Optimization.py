@@ -8,6 +8,8 @@ import SimpleITK as sitk
 from pathlib import Path
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
+import statsmodels.formula.api as smf
+from scipy.stats.distributions import t
 from skimage import morphology, measure, color
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
@@ -38,16 +40,17 @@ class Parameters:
         self.N = ImageNumber
         self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
         self.Threshold = Threshold
+        self.MinCost = 1.
 
 class PSOArgs:
 
-    def __init__(self, Function2Optimize, Ranges, Population, Cs):
+    def __init__(self, Function2Optimize, Ranges, Population, Cs, MaxIt=10, STC=1E-3):
         self.Function = Function2Optimize
         self.Ranges = Ranges
         self.Population = Population
         self.Cs = Cs
-        self.MaxIt = 10
-        self.STC = 1E-3
+        self.MaxIt = MaxIt
+        self.STC = STC
 
 
 def PlotArray(Array, Title, CMap='gray', ColorBar=False):
@@ -63,7 +66,6 @@ def PlotArray(Array, Title, CMap='gray', ColorBar=False):
 
     return
 
-
 def PrintTime(Tic, Toc):
     """
     Print elapsed time in seconds to time in HH:MM:SS format
@@ -78,7 +80,6 @@ def PrintTime(Tic, Toc):
     Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
 
     print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
-
 
 def PixelSize(Image, Length, Plot=False):
     """
@@ -114,7 +115,6 @@ def PixelSize(Image, Length, Plot=False):
 
     return PixelLength
 
-
 def ReadImage(Params, Plot=True):
     # Read image and plot it
     Directory = Params.Directory
@@ -142,7 +142,6 @@ def ReadImage(Params, Plot=True):
         Params.PixelLength = PixelSize(Params.Image[9400:-400, 12500:-300], 2000, Plot=True)
     else:
         Params.PixelLength = 1.0460251046025104  # Computed with 418 RM
-
 
 def SegmentBone(Image, Plot=False):
     """
@@ -187,6 +186,65 @@ def SegmentBone(Image, Plot=False):
 
     return Bone
 
+def RandCoords(Coords, ROINumber, TotalNROIs):
+
+    XCoords, YCoords = Coords
+
+    XRange = XCoords.max() - XCoords.min()
+    Width = XRange / (TotalNROIs + 1)
+    RandX = int((ROINumber + 1) * XRange / (TotalNROIs + 1) + np.random.randn() * Width**(1 / 2))
+    YCoords = YCoords[XCoords == RandX]
+    YRange = YCoords.max() - YCoords.min()
+    RandY = int(np.median(YCoords) + np.random.randn() * (Width * YRange/XRange)**(1 / 2))
+
+    return [RandX, RandY]
+
+def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
+
+    ROIs = np.zeros((NROIs,ROISize,ROISize,3)).astype('int')
+    BoneROIs = np.zeros((NROIs,ROISize,ROISize)).astype('int')
+    Xs = np.zeros((NROIs,2)).astype('int')
+    Ys = np.zeros((NROIs,2)).astype('int')
+
+    for i in range(NROIs):
+        RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
+        X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
+        Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
+        BoneROI = Bone[Y1:Y2, X1:X2]
+        BVTV = BoneROI.sum() / BoneROI.size
+
+        while BVTV < Params.Threshold:
+            RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
+            X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
+            Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
+            BoneROI = Bone[Y1:Y2, X1:X2]
+            BVTV = BoneROI.sum() / BoneROI.size
+
+        ROIs[i] += Params.Image[Y1:Y2, X1:X2]
+        BoneROIs[i] += Bone[Y1:Y2, X1:X2]
+        Xs[i] += [X1, X2]
+        Ys[i] += [Y1, Y2]
+
+    if Plot:
+
+        Shape = np.array(Params.Image.shape[:-1]) / 1000
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Params.Image)
+        Axis.plot([X1, X2], [Y1, Y1], color=(1, 0, 0))
+        Axis.plot([X2, X2], [Y1, Y2], color=(1, 0, 0))
+        Axis.plot([X2, X1], [Y2, Y2], color=(1, 0, 0))
+        Axis.plot([X1, X1], [Y2, Y1], color=(1, 0, 0))
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(ROIs[i])
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    return ROIs, BoneROIs, Xs, Xs
 
 def ExtractSkeleton(Image, Plot=False):
     """
@@ -235,7 +293,6 @@ def ExtractSkeleton(Image, Plot=False):
 
     return Skeleton
 
-
 def NormalizeValues(Image):
     """
     Normalize image values, used in PCNN for easier parameters handling
@@ -246,7 +303,6 @@ def NormalizeValues(Image):
     N_Image = (Image - Image.min()) / (Image.max() - Image.min())
 
     return N_Image
-
 
 def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=100):
     """
@@ -304,19 +360,66 @@ def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=10
 
     return Output
 
-
 def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.05])):
 
     Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
-    Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+
+    for i in range(Params.ROIs.shape[0]):
+    Segmented = PCNN(Params.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
     Values = np.unique(Segmented)
     DensityDiff = np.zeros(len(Values))
     for Index, Value in enumerate(Values):
         Bin = (Segmented == Value) * 1
-        DensityDiff[Index] = abs(Params.Reference - Bin.sum() / Bin.size)
+        DensityDiff[Index] = abs(Params.Reference - Bin.sum() / Bin.size) / Params.Reference
 
-    Params.SegMin = DensityDiff.argmin()
+    if DensityDiff.min() < Params.MinCost:
+        Params.MinCost = DensityDiff.min()
+        Params.SegMin = DensityDiff.argmin()
     return DensityDiff.min()
+
+def PlotRegressionResults(Model,Alpha=0.95):
+
+    print(Model.summary())
+
+    ## Plot results
+    Y_Obs = Model.model.endog
+    Y_Fit = Model.fittedvalues
+    N = int(Model.nobs)
+    C = np.matrix(Model.cov_params())
+    X = np.matrix(Model.model.exog)
+    X_Obs = np.sort(np.array(X[:,1]).reshape(len(X)))
+
+
+    ## Compute R2 and standard error of the estimate
+    E = Y_Obs - Y_Fit
+    RSS = np.sum(E ** 2)
+    SE = np.sqrt(RSS / Model.df_resid)
+    TSS = np.sum((Model.model.endog - Model.model.endog.mean()) ** 2)
+    RegSS = TSS - RSS
+    R2 = RegSS / TSS
+
+    ## Compute CI lines
+    B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
+    t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
+    CI_Line_u = Y_Fit + t_Alpha[0] * SE * B_0
+    CI_Line_o = Y_Fit + t_Alpha[1] * SE * B_0
+
+
+    ## Plots
+    DPI = 100
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=DPI, sharey=True, sharex=True)
+    Axes.plot(X[:,1], Y_Fit, color=(1,0,0), label='Fit')
+    Axes.fill_between(X_Obs, np.sort(CI_Line_o), np.sort(CI_Line_u), color=(0, 0, 0), alpha=0.1, label=str(int(Alpha*100)) + '% CI')
+    Axes.plot(X[:,1], Y_Obs, linestyle='none', marker='o', color=(0,0,0), fillstyle='none')
+    Axes.annotate(r'$N$  : ' + str(N), xy=(0.8, 0.175), xycoords='axes fraction')
+    Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.8, 0.1), xycoords='axes fraction')
+    Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.8, 0.025), xycoords='axes fraction')
+    Axes.set_ylabel('Mineral Density (mg HA/cm$^3$)')
+    Axes.set_xlabel('Gray Value (-)')
+    plt.subplots_adjust(left=0.15, bottom=0.15)
+    plt.legend()
+    plt.show()
+    plt.close(Figure)
 
 
 # Read Image
@@ -329,66 +432,44 @@ Y, X = np.where(Bone)
 
 # Set ROI pixel size
 PhysicalSize = 1000
-GridSize = int(round(PhysicalSize / Params.PixelLength))
+ROISize = int(round(PhysicalSize / Params.PixelLength))
 
 # Filter positions too close to the border
-F1 = X > GridSize / 2
-F2 = X < Bone.shape[1] - GridSize / 2
+F1 = X > ROISize / 2
+F2 = X < Bone.shape[1] - ROISize / 2
 FilteredX = X[F1 & F2]
-
-F1 = Y > GridSize / 2
-F2 = Y < Bone.shape[0] - GridSize / 2
 FilteredY = Y[F1 & F2]
 
+F1 = FilteredY > ROISize / 2
+F2 = FilteredY < Bone.shape[0] - ROISize / 2
+FilteredY = FilteredY[F1 & F2]
+FilteredX = FilteredX[F1 & F2]
+
 # Extract random ROI and verify validity
-RandY, RandX = np.random.choice(FilteredY, 1)[0], np.random.choice(FilteredX, 1)[0]
-X1, X2 = RandX - int(GridSize / 2), RandX + int(GridSize / 2)
-Y1, Y2 = RandY - int(GridSize / 2), RandY + int(GridSize / 2)
-BoneROI = Bone[Y1:Y2, X1:X2]
-BVTV = BoneROI.sum() / BoneROI.size
-
-while BVTV < Params.Threshold:
-    RandY, RandX = np.random.choice(FilteredY, 1)[0], np.random.choice(FilteredX, 1)[0]
-    X1, X2 = RandX - int(GridSize / 2), RandX + int(GridSize / 2)
-    Y1, Y2 = RandY - int(GridSize / 2), RandY + int(GridSize / 2)
-    BoneROI = Bone[Y1:Y2, X1:X2]
-    BVTV = BoneROI.sum() / BoneROI.size
-
-# To plot simulation results
-Shape = np.array(Params.Image.shape[:-1]) / 1000
-Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-Axis.imshow(Params.Image)
-Axis.plot([X1, X2], [Y1, Y1], color=(1, 0, 0))
-Axis.plot([X2, X2], [Y1, Y2], color=(1, 0, 0))
-Axis.plot([X2, X1], [Y2, Y2], color=(1, 0, 0))
-Axis.plot([X1, X1], [Y2, Y1], color=(1, 0, 0))
-Axis.axis('off')
-plt.subplots_adjust(0, 0, 1, 1)
-plt.show()
-
-ROI = Params.Image[Y1:Y2, X1:X2]
-Shape = np.array(ROI.shape[:-1]) / max(ROI.shape[:-1]) * 10
-Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-Axis.imshow(ROI)
-Axis.axis('off')
-plt.subplots_adjust(0, 0, 1, 1)
-plt.show()
+NROIs = 2
+ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
 
 # Extract manual segmentation and compute CM density
-Skeleton = ExtractSkeleton(Params.SegImage[Y1:Y2, X1:X2], Plot=True)
-Params.Reference = Skeleton.sum() / BoneROI.sum()
+Skeletons = np.zeros(BoneROIs.shape)
+References = np.zeros(NROIs)
+for i in range(NROIs):
+    Skeletons[i] += ExtractSkeleton(Params.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=True)
+    References[i] += Skeletons[i].sum() / BoneROIs[i].sum()
+Params.Reference = References
 
 # Convert ROI into gray scale image
-Lab = color.rgb2lab(ROI)
-PlotArray(Lab[:,:,1],'Original Image')
-Params.ROI = Lab[:,:,1]
+Grays = np.zeros(BoneROIs.shape)
+for i in range(NROIs):
+    Grays[i] = color.rgb2gray(ROIs[i])
+Params.ROIs = Grays
+
 
 # Run PSO for PCNN parameters
 Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-2,1]])
 Population = 20
-Cs = [0.1, 0.1]
-Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs)
-PSOResults = PSO.Main(Arguments)
+Cs = [0.15, 0.1]
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20)
+PSOResults = PSO.Main(Arguments, Evolution=True)
 
 # Plot results
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
@@ -397,7 +478,32 @@ Values = np.unique(Segmented)
 Bin = (Segmented == Values[Params.SegMin]) * 1
 PlotArray(Bin, 'Segment ' + str(Params.SegMin))
 
-Bin.sum() / Bin.size
-Params.Reference
+print('Reference value: ' + str(Params.Reference))
+print('Final value: ' + str(Bin.sum() / Bin.size))
+print('Relative difference: ' + str(Params.MinCost))
 
-PlotArray(Skeleton, 'Skeleton')
+
+
+# Verifiy correlation between automatic and manual segmentation
+Manuals = Bin.sum() / Bin.size
+Automatic = Params.Reference
+
+for i in range(10):
+    ROI, BoneROI, [X1,X2], [Y1,Y2] = ExtractROI(Bone, FilteredX, FilteredY)
+    Skeleton = ExtractSkeleton(Params.SegImage[Y1:Y2, X1:X2], Plot=True)
+    PlotArray(Skeleton, 'Skeleton')
+    Manuals = np.append(Manuals, Skeleton.sum() / BoneROI.sum())
+
+    Params.ROI = color.rgb2lab(ROI)[:, :, 2]
+    Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+    Values = np.unique(Segmented)
+    Bin = (Segmented == Values[Params.SegMin]) * 1
+    PlotArray(Bin, 'Segment ' + str(Params.SegMin))
+    Automatic = np.append(Automatic, Bin.sum() / Bin.size)
+
+# Built data frame with mean values and corresponding mineral densities (see pdf)
+Data2Fit = pd.DataFrame({'Manual': Manuals,
+                         'Automatic': Automatic})
+
+FitResults = smf.ols('Automatic ~ 1 + Manual', data=Data2Fit).fit()
+PlotRegressionResults(FitResults)
