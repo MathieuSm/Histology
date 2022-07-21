@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
 import time
-import argparse
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from pathlib import Path
 import matplotlib.pyplot as plt
-from scipy.ndimage import correlate
 import statsmodels.formula.api as smf
 from skimage import morphology, measure
 
@@ -35,7 +33,7 @@ Description = """
     """
 
 
-class Parameters:
+class ParametersClass:
 
     def __init__(self, ImageNumber, Threshold=0.88, SubArea=[[1800, 2200], [7800, 8200]]):
         self.N = ImageNumber
@@ -93,12 +91,12 @@ def PixelSize(Image, Length, Plot=False):
 
     return PixelLength
 
-def ReadImage(Params, Plot=True):
+def ReadImage(Plot=True):
 
     # Read image and plot it
-    Directory = Params.Directory
+    Directory = Parameters.Directory
     DataFrame = pd.read_csv(str(Directory / 'Data.csv'))
-    SampleData = DataFrame.loc[Params.N]
+    SampleData = DataFrame.loc[Parameters.N]
     Name = str(str(SampleData['Sample']) + SampleData['Side'][0] + SampleData['Cortex'][0] + '_Seg.jpg')
     Image = sitk.GetArrayFromImage(sitk.ReadImage(str(Directory / Name)))[:, :, :3]
 
@@ -111,13 +109,13 @@ def ReadImage(Params, Plot=True):
         plt.show()
 
     # Store name, image, and pixel length in parameters class
-    Params.Name = Name[:-7]
-    Params.Image = Image
+    Parameters.Name = Name[:-7]
+    Parameters.Image = Image
 
-    if Params.Name[:5] == '418RM':
-        Params.PixelLength = PixelSize(Params.Image[9400:-400, 12500:-300], 2000, Plot=True)
+    if Parameters.Name[:5] == '418RM':
+        Parameters.PixelLength = PixelSize(Parameters.Image[9400:-400, 12500:-300], 2000, Plot=True)
     else:
-        Params.PixelLength = 1.0460251046025104  # Computed with 418 RM
+        Parameters.PixelLength = 1.0460251046025104  # Computed with 418 RM
 
 def SegmentBone(Image, Plot=False, SubArea=None):
 
@@ -169,68 +167,6 @@ def SegmentBone(Image, Plot=False, SubArea=None):
 
     return Bone
 
-def ExtractSkeleton(Image, Plot=False, SubArea=None):
-
-    """
-    Extract skeleton of manually segmented image
-    :param Image: Numpy image dim r x c x 3
-    :param Plot: 'Full' or 'Sub' to plot intermediate results
-    :param SubArea: Indices to plot smaller image of intermediate results
-    :return: Skeleton of the segmentation
-    """
-
-    Tic = time.time()
-    print('Extract manual segmentation skeleton ...')
-
-    if not SubArea:
-        SubArea = [[0, 1], [0, 1]]
-
-    Filter1 = Image[:, :, 0] > 100
-    Filter2 = Image[:, :, 1] < 90
-    Filter3 = Image[:, :, 2] > 100
-
-    Bin = np.zeros(Filter1.shape)
-    Bin[Filter1 & Filter2 & Filter3] = 1
-
-    # Dilate to link extracted segmentation
-    Disk = morphology.disk(5)
-    BinDilate = morphology.binary_dilation(Bin, Disk)
-
-    if Plot == 'Full':
-        Shape = np.array(Image.shape[:-1]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(BinDilate, cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    elif Plot == 'Sub':
-        Shape = np.array([SubArea[1][1]-SubArea[1][0], SubArea[0][1]-SubArea[0][0]]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(BinDilate[SubArea[0][0]:SubArea[0][1],
-                    SubArea[1][0]:SubArea[1][1]], cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Skeletonize to obtain 1 pixel thickness
-    Skeleton = morphology.skeletonize(BinDilate)
-
-    if Plot == 'Sub':
-        Shape = np.array([SubArea[1][1] - SubArea[1][0], SubArea[0][1] - SubArea[0][0]]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Skeleton[SubArea[0][0]:SubArea[0][1],
-                    SubArea[1][0]:SubArea[1][1]], cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
-
-    return Skeleton
-
 def ValidArea(Bone, GridSize, Threshold, Plot=False):
 
     """
@@ -264,9 +200,9 @@ def ValidArea(Bone, GridSize, Threshold, Plot=False):
                 ValidArea[YGrid[j, i]:YGrid[j+1, i], XGrid[j, i]:XGrid[j, i+1]] = 1
 
     if Plot:
-        Shape = np.array(Params.Image.shape[:-1]) / 1000
+        Shape = np.array(Parameters.Image.shape[:-1]) / 1000
         Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Params.Image)
+        Axis.imshow(Parameters.Image)
         Axis.imshow(ValidArea, cmap='Greens', alpha=1/3)
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
@@ -277,6 +213,51 @@ def ValidArea(Bone, GridSize, Threshold, Plot=False):
     PrintTime(Tic, Toc)
 
     return ValidArea
+
+def ExtractSkeleton(Image, Plot=False):
+    """
+    Extract skeleton of manually segmented image
+    :param Image: Numpy image dim r x c x 3
+    :param Plot: 'Full' or 'Sub' to plot intermediate results
+    :param SubArea: Indices to plot smaller image of intermediate results
+    :return: Skeleton of the segmentation
+    """
+
+    Tic = time.time()
+    print('\nExtract manual segmentation skeleton ...')
+
+    Filter1 = Image[:, :, 0] > 100
+    Filter2 = Image[:, :, 1] < 90
+    Filter3 = Image[:, :, 2] < 150
+
+    Bin = np.zeros(Filter1.shape)
+    Bin[Filter1 & Filter2 & Filter3] = 1
+
+    # Dilate to link extracted segmentation
+    Disk = morphology.disk(5)
+    BinDilate = morphology.binary_dilation(Bin, Disk)
+
+    # Skeletonize to obtain 1 pixel thickness
+    Skeleton = morphology.skeletonize(BinDilate)
+
+    if Plot:
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Skeleton, cmap='binary')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Skeleton
 
 def CMDensities(GridSize, Bone, Skeleton, Plot=False):
 
@@ -316,12 +297,12 @@ def CMDensities(GridSize, Bone, Skeleton, Plot=False):
                 Densities[j, i] = 0
 
     if Plot:
-        Shape = np.array(Params.Image.shape[:-1]) / 1000
+        Shape = np.array(Parameters.Image.shape[:-1]) / 1000
         Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Params.Image)
+        Axis.imshow(Parameters.Image)
         Axis.pcolormesh(XGrid + GridSize / 2, YGrid + GridSize / 2, Densities, cmap='Greens', alpha=0.5)
-        Axis.set_xlim([0, Params.Image.shape[1]])
-        Axis.set_ylim([Params.Image.shape[0], 0])
+        Axis.set_xlim([0, Parameters.Image.shape[1]])
+        Axis.set_ylim([Parameters.Image.shape[0], 0])
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
         plt.show()
@@ -334,17 +315,17 @@ def CMDensities(GridSize, Bone, Skeleton, Plot=False):
 
 def CollectDensities(PhysicalSizes):
 
-    Bone = SegmentBone(Params.Image, Plot='Full')
+    Bone = SegmentBone(Parameters.Image, Plot='Full')
 
-    Skeleton = ExtractSkeleton(Params.Image, Plot='Full')
+    Skeleton = ExtractSkeleton(Parameters.Image, Plot=True)
 
     # Store results for different densities in data frame
     DensityData = pd.DataFrame()
 
     for PhysicalSize in PhysicalSizes:
 
-        GridSize = int(round(PhysicalSize / Params.PixelLength))
-        Valid = ValidArea(Bone, GridSize, Params.Threshold, Plot=True)
+        GridSize = int(round(PhysicalSize / Parameters.PixelLength))
+        Valid = ValidArea(Bone, GridSize, Parameters.Threshold, Plot=True)
         Densities = CMDensities(GridSize,Bone*Valid,Skeleton*Valid)
 
         if DensityData.size == 0:
@@ -376,13 +357,86 @@ def CollectDensities(PhysicalSizes):
 
     # Save densities
     DensityData = DensityData.replace({np.nan: 0})
-    DensityData.to_csv(str(Params.Directory / str(Params.Name + 'Densities.csv')), index=False)
+    DensityData.to_csv(str(Parameters.Directory / str(Parameters.Name + 'Densities.csv')), index=False)
 
     return
 
+def RandCoords(Coords, ROINumber, TotalNROIs):
 
-Params = Parameters(0)
-ReadImage(Params)
+    XCoords, YCoords = Coords
+
+    XRange = XCoords.max() - XCoords.min()
+    Width = XRange / (TotalNROIs + 1)
+    RandX = int((ROINumber + 1) * XRange / (TotalNROIs + 1) + np.random.randn() * Width**(1 / 2))
+    YCoords = YCoords[XCoords == RandX]
+    YRange = YCoords.max() - YCoords.min()
+    RandY = int(np.median(YCoords) + np.random.randn() * (Width * YRange/XRange)**(1 / 2))
+
+    return [RandX, RandY]
+
+def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False, ROIsPlot=False):
+
+    Tic = time.time()
+    print('\nBegin ' + str(NROIs) + ' ROIs extraction ...')
+
+    ROIs = np.zeros((NROIs,ROISize,ROISize,3)).astype('int')
+    BoneROIs = np.zeros((NROIs,ROISize,ROISize)).astype('int')
+    Xs = np.zeros((NROIs,2)).astype('int')
+    Ys = np.zeros((NROIs,2)).astype('int')
+
+    for i in range(NROIs):
+        RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
+        X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
+        Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
+        BoneROI = Bone[Y1:Y2, X1:X2]
+        BVTV = BoneROI.sum() / BoneROI.size
+
+        j = 0
+        while BVTV < Parameters.Threshold and j < 100:
+            RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
+            X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
+            Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
+            BoneROI = Bone[Y1:Y2, X1:X2]
+            BVTV = BoneROI.sum() / BoneROI.size
+            j += 1
+            if j == 100:
+                print('No ROI found after 100 iterations')
+
+        ROIs[i] += Parameters.Image[Y1:Y2, X1:X2]
+        BoneROIs[i] += Bone[Y1:Y2, X1:X2]
+        Xs[i] += [X1, X2]
+        Ys[i] += [Y1, Y2]
+
+        if ROIsPlot:
+            Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+            Axis.imshow(ROIs[i])
+            Axis.axis('off')
+            plt.subplots_adjust(0, 0, 1, 1)
+            plt.show()
+
+    if Plot:
+        Shape = np.array(Parameters.Image.shape[:-1]) / 1000
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Parameters.Image)
+
+        for i in range(len(Xs)):
+            Axis.plot([Xs[i,0], Xs[i,1]], [Ys[i,0], Ys[i,0]], color=(1, 0, 0))
+            Axis.plot([Xs[i,1], Xs[i,1]], [Ys[i,0], Ys[i,1]], color=(1, 0, 0))
+            Axis.plot([Xs[i,1], Xs[i,0]], [Ys[i,1], Ys[i,1]], color=(1, 0, 0))
+            Axis.plot([Xs[i,0], Xs[i,0]], [Ys[i,1], Ys[i,0]], color=(1, 0, 0))
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic,Toc)
+
+    return ROIs, BoneROIs, Xs, Ys
+
+
+Parameters = ParametersClass(9)
+ReadImage()
 
 # Compute cement lines density for multiple grid size
 PhysicalSizes = [100, 200, 500, 1000, 1500, 2000]  # Grid size in um
@@ -390,7 +444,7 @@ CollectDensities(PhysicalSizes)
 
 
 # Collect densities data to compare between samples
-DataFrame = pd.read_csv(str(Params.Directory / 'Data.csv'))
+DataFrame = pd.read_csv(str(Parameters.Directory / 'Data.csv'))
 Samples = DataFrame[DataFrame['Cortex'] == 'Lateral']
 Data100 = pd.DataFrame()
 Data200 = pd.DataFrame()
@@ -403,7 +457,7 @@ Datas = [Data100, Data200, Data500, Data1000, Data1500, Data2000]
 for Index in Samples.index:
     SampleData = Samples.loc[Index]
     Name = str(str(SampleData['Sample']) + SampleData['Side'][0] + SampleData['Cortex'][0] + '_Densities.csv')
-    Data = pd.read_csv(str(Params.Directory / Name))
+    Data = pd.read_csv(str(Parameters.Directory / Name))
     Data = Data.replace({0: np.nan})
 
     if Index == 0:
@@ -415,6 +469,30 @@ for Index in Samples.index:
             Datas[i][Name[:5]] = np.nan
             Datas[i][Name[:5]] = Data[str(PhysicalSizes[i])]
 
+# Plot densities for a given sample
+i = 0
+Figure, Axis = plt.subplots(1, 1)
+for Data in Datas:
+    Axis.boxplot(Data['418RM'].dropna(), vert=True, widths=int(PhysicalSizes[i] / 5),
+                 positions=[PhysicalSizes[i]],
+                 showmeans=False, meanline=True,
+                 capprops=dict(color=(0, 0, 0)),
+                 boxprops=dict(color=(0, 0, 0)),
+                 whiskerprops=dict(color=(0, 0, 0), linestyle='--'),
+                 flierprops=dict(color=(0, 0, 0)),
+                 medianprops=dict(color=(1, 0, 0)),
+                 meanprops=dict(color=(0, 1, 0)))
+    i += 1
+Axis.plot([], linestyle='none', marker='o', fillstyle='none', color=(1, 0, 0), label='Data')
+Axis.plot([], color=(0, 0, 1), label='Median')
+Axis.set_xscale('log')
+Axis.set_xlabel('Grid Size [$\mu$m]')
+Axis.set_ylabel('Density [-]')
+Axis.set_ylim([-0.0035, 0.065])
+plt.subplots_adjust(left=0.25, right=0.75)
+plt.show()
+
+# Plot densities for a given size
 j = 0
 for Data in Datas:
     Figure, Axis = plt.subplots(1, 1)
@@ -449,9 +527,9 @@ ROINumber = 10
 for i in Samples.index:
 
     # Open image to segment
-    Params = Parameters(i)
-    ReadImage(Params)
-    Shape = Params.Image.shape
+    Parameters = ParametersClass(i)
+    ReadImage(Parameters)
+    Shape = Parameters.Image.shape
 
     Sample = Samples.loc[i]
     SampleName = str(Sample['Sample']) + Sample['Side'][0] + Sample['Cortex'][0]
@@ -459,74 +537,49 @@ for i in Samples.index:
     M = Data[SampleName].mean()
     S = Data[SampleName].std()
 
-    Bone = SegmentBone(Params.Image, Plot='Full')
-    Skeleton = ExtractSkeleton(Params.Image, Plot='Full')
-    Valid = ValidArea(Bone, GridSize, Params.Threshold, Plot=True)
+    # Segment bone and extract coordinate
+    Bone = SegmentBone(Parameters.Image, Plot=False)
+    Y, X = np.where(Bone)
 
-    # Random zone selection
-    Size = int(round(GridSize / Params.PixelLength))
+    # Set ROI pixel size
+    ROISize = int(round(GridSize / Parameters.PixelLength))
+    if np.mod(ROISize,2) == 1:
+        ROISize = ROISize + 1
+
+    # Filter positions too close to the border
+    F1 = X > ROISize / 2
+    F2 = X < Bone.shape[1] - ROISize / 2
+    FilteredX = X[F1 & F2]
+    FilteredY = Y[F1 & F2]
+
+    F1 = FilteredY > ROISize / 2
+    F2 = FilteredY < Bone.shape[0] - ROISize / 2
+    FilteredY = FilteredY[F1 & F2]
+    FilteredX = FilteredX[F1 & F2]
+
+    # Initialize loop for ROIs selection
     BVTV = np.zeros((ROINumber, ROINumber))
     CMDensity = np.zeros((ROINumber, ROINumber))
-    j = 1
-    while j < ROINumber + 1:
 
-        # To plot simulation results
-        IShape = np.array(Params.Image.shape[:-1]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(IShape[1], IShape[0]))
-        Axis.imshow(Params.Image)
+    for j in range(1, ROINumber+1):
+
+        # Extract random ROI and verify validity
+        ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=j, Plot=False)
 
         for k in range(j):
-            RandomXPos = int((k + 1) * Shape[1] / (j + 1) + np.random.randn() * Size / 4)
-            RandomYPos = int(np.random.uniform(Size / 2 + 1, Shape[0] - Size / 2 - 1))
+            ROISkeleton = ExtractSkeleton(ROIs[k], Plot=False)
+            BVTV[j - 1, k] = BoneROIs[k].sum() / BoneROIs[k].size
+            CMDensity[j - 1, k] = ROISkeleton.sum() / BoneROIs[k].sum()
 
-            X1, X2 = RandomXPos - int(Size / 2), RandomXPos + int(Size / 2)
-            Y1, Y2 = RandomYPos - int(Size / 2), RandomYPos + int(Size / 2)
-
-            SubRegion = (Skeleton * Valid)[Y1:Y2, X1:X2]
-            SubBone = (Bone * Valid)[Y1:Y2, X1:X2]
-
-            BoneFraction = SubBone.sum() / SubBone.size
-
-            l = 0
-            while BoneFraction < Params.Threshold:
-                RandomXPos = int((k + 1) * Shape[1] / (j + 1) + np.random.randn() * Size / 2)
-                RandomYPos = int(np.random.uniform(Size / 2 + 1, Shape[0] - Size / 2 - 1))
-
-                X1, X2 = RandomXPos - int(Size / 2), RandomXPos + int(Size / 2)
-                Y1, Y2 = RandomYPos - int(Size / 2), RandomYPos + int(Size / 2)
-
-                SubRegion = (Skeleton * Valid)[Y1:Y2, X1:X2]
-                SubBone = (Bone * Valid)[Y1:Y2, X1:X2]
-
-                BoneFraction = SubBone.sum() / SubBone.size
-                l += 1
-
-                if l > 100:
-                    print('No corresponding ROI found')
-                    break
-
-            Axis.plot([X1, X2], [Y1, Y1], color=(1, 0, 0))
-            Axis.plot([X2, X2], [Y1, Y2], color=(1, 0, 0))
-            Axis.plot([X2, X1], [Y2, Y2], color=(1, 0, 0))
-            Axis.plot([X1, X1], [Y2, Y1], color=(1, 0, 0))
-
-            BVTV[j - 1, k] = BoneFraction
-            CMDensity[j - 1, k] = SubRegion.sum() / SubBone.sum()
-
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-        j += 1
-
-    Filter = BVTV == 0
+    Filter = BVTV < Parameters.Threshold
     BVTV[Filter] = np.nan
     CMDensity[Filter] = np.nan
 
     Figure, Axis = plt.subplots(1, 1)
     Axis.plot(BVTV.flatten(), CMDensity.flatten(), color=(1, 0, 0), marker='o', fillstyle='none', linestyle='none',
               label='Tests')
-    Axis.plot([0, np.nanmax(BVTV)], [M, M], color=(0, 0, 0), linestyle='--', label='Grid Mean')
-    Axis.fill_between([0, np.nanmax(BVTV)], [M + S, M + S], [M - S, M - S], color=(0, 0, 0, 0.2),
+    Axis.plot([np.nanmin(BVTV), np.nanmax(BVTV)], [M, M], color=(0, 0, 0), linestyle='--', label='Grid Mean')
+    Axis.fill_between([np.nanmin(BVTV), np.nanmax(BVTV)], [M + S, M + S], [M - S, M - S], color=(0, 0, 0, 0.2),
                       label='Standard deviation')
     Axis.set_xlabel('BV/TV (-)')
     Axis.set_ylabel('Density (-)')
@@ -547,10 +600,11 @@ for i in Samples.index:
                       label='Standard deviation')
     Axis.set_xlabel('ROI number (-)')
     Axis.set_ylabel('Density relative error (-)')
-    plt.legend(loc='upper center', ncol=2, bbox_to_anchor=(0.5, 1.15))
+    plt.legend(loc='upper center', ncol=2, bbox_to_anchor=(0.5, 1.17))
     plt.show()
 
     MeansData[SampleName] = Means / M - 1
+print('Done!')
 
 Colors = [(1, 0, 0), (1, 0, 1), (0, 0, 1), (0, 1, 1), (0, 1, 0)]
 
@@ -572,7 +626,7 @@ def PlotRegressionResults(Model, Data, ROINumber):
     Y_Obs = Model.model.endog
     N = int(Model.nobs)
     C = np.matrix(Model.cov_params())
-    X = np.matrix(Model.model.exog)[:1000]
+    X = np.matrix(Model.model.exog)
     Y_Fit = np.array(Model.params[0] + Model.params[1] * X[:, 1]).reshape(len(X))
 
     if not C.shape[0] == X.shape[1]:
@@ -592,7 +646,7 @@ def PlotRegressionResults(Model, Data, ROINumber):
     for i in range(len(Data['Groups'].unique())):
         y = Data[Data['Groups'] == Data['Groups'].unique()[i]]['y'].values
         Axes.plot(np.arange(ROINumber)+1, y, label=Data['Groups'].unique()[i], color=Colors[i])
-    Axes.plot(Y_Fit, color=(0, 0, 0), linestyle='--', label='Fit')
+    Axes.plot(np.arange(10)+1,Y_Fit[:10], color=(0, 0, 0), linestyle='--', label='Fit')
     Axes.set_xlabel('Number of ROIs [-]')
     Axes.set_ylabel('Relative error [-]')
     # Axes.annotate(r'N Groups : ' + str(len(Data.groupby('Groups'))), xy=(0.65, 0.925), xycoords='axes fraction')
@@ -623,17 +677,16 @@ LMM.params[0]
 LMM.params[1]
 
 # Fit results
-MedialCurve0500 = 0.0061242024263207595 + 0.3908892151023689 / (np.arange(ROINumber) + 1)
-MedialCurve1000 = 0.05096539213717121 + 0.08095311891458373 / (np.arange(ROINumber) + 1)
-MedialCurve1500 = 0.03726726993200507 + 0.03193766700713566 / (np.arange(ROINumber) + 1)
-MedialCurve2000 = 0.05180894059961111 + 0.0004849689940706492 / (np.arange(ROINumber) + 1)
+MedialCurve0500 = 0.04329550911421737 + 0.28248717785898364 / (np.arange(ROINumber) + 1)
+MedialCurve1000 = 0.01970149959782633 + 0.1461692814902478 / (np.arange(ROINumber) + 1)
+MedialCurve1500 = 0.03467395522706307 + 0.03713466489600956 / (np.arange(ROINumber) + 1)
+MedialCurve2000 = 0.022140427755325202 + 0.013525341908709876 / (np.arange(ROINumber) + 1)
 MedialCurves = [MedialCurve0500, MedialCurve1000, MedialCurve1500, MedialCurve2000]
 
-LateralCurve0500 = 0.1382048195925299 + 0.7874752850317369 / (np.arange(ROINumber) + 1)
-LateralCurve1000 = 0.14736325218702714 + 0.3527520514687957 / (np.arange(ROINumber) + 1)
-LateralCurve1500 = 0.20875914756443886 + 0.01027383986497419 / (np.arange(ROINumber) + 1)
-# LateralCurve2000 = 0.07483507798042248 + 0.9343716072050389 / (np.arange(ROINumber) + 1)
-LateralCurves = [LateralCurve0500, LateralCurve1000, LateralCurve1500]
+LateralCurve100 = 0.27331467423722555 + 0.3656847636005985 / (np.arange(ROINumber) + 1)
+LateralCurve200 = 0.10139006402062499 + 0.27522131834720104 / (np.arange(ROINumber) + 1)
+LateralCurve500 = 0.1687137707060012 + 0.04178297189997549 / (np.arange(ROINumber) + 1)
+LateralCurves = [LateralCurve100, LateralCurve200, LateralCurve500]
 
 Colors = [(1, 0, 0), (1, 0, 1), (0, 0, 1), (0, 1, 1), (0, 1, 0)]
 PhysicalSizes = [100, 200, 500, 1000, 1500, 2000]  # Grid size in um
@@ -645,16 +698,16 @@ for Index in range(len(MedialCurves)):
 Axis.set_xlabel('Number of ROIs [-]')
 Axis.set_ylabel('Fitted Curve [-]')
 Axis.set_xlim([0, ROINumber+1])
-Axis.set_ylim([0, 1])
+Axis.set_ylim([0, 0.7])
 plt.legend()
 plt.show()
 
 Figure, Axis = plt.subplots(1, 1)
 for Index in range(len(LateralCurves)):
-    Axis.plot(np.arange(ROINumber)+1, LateralCurves[Index], color=Colors[Index], label=str(PhysicalSizes[Index + 2]))
+    Axis.plot(np.arange(ROINumber)+1, LateralCurves[Index], color=Colors[Index], label=str(PhysicalSizes[Index]))
 Axis.set_xlabel('Number of ROIs [-]')
 Axis.set_ylabel('Fitted Curve [-]')
 Axis.set_xlim([0, ROINumber+1])
-Axis.set_ylim([0, 1])
+Axis.set_ylim([0, 0.7])
 plt.legend()
 plt.show()
