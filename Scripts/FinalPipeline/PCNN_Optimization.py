@@ -34,13 +34,12 @@ Description = """
     """
 
 
-class Parameters:
+class ParameterClass:
 
     def __init__(self, ImageNumber, Threshold=0.88):
         self.N = ImageNumber
         self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
         self.Threshold = Threshold
-        self.MinCost = 1.
 
 class PSOArgs:
 
@@ -52,6 +51,11 @@ class PSOArgs:
         self.MaxIt = MaxIt
         self.STC = STC
 
+class ResultsClass:
+
+    def __init__(self, NROis):
+        self.Automatics = np.zeros(NROis)
+        self.MinCosts = np.ones(NROIs)
 
 def PlotArray(Array, Title, CMap='gray', ColorBar=False):
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
@@ -115,11 +119,11 @@ def PixelSize(Image, Length, Plot=False):
 
     return PixelLength
 
-def ReadImage(Params, Plot=True):
+def ReadImage(Parameters, Plot=True):
     # Read image and plot it
-    Directory = Params.Directory
+    Directory = Parameters.Directory
     DataFrame = pd.read_csv(str(Directory / 'Data.csv'))
-    SampleData = DataFrame.loc[Params.N]
+    SampleData = DataFrame.loc[Parameters.N]
     Name = str(str(SampleData['Sample']) + SampleData['Side'][0] + SampleData['Cortex'][0] + '.jpg')
     Image = sitk.GetArrayFromImage(sitk.ReadImage(str(Directory / Name)))[:, :, :3]
     Name = Name[:-4] + '_Seg.jpg'
@@ -134,14 +138,14 @@ def ReadImage(Params, Plot=True):
         plt.show()
 
     # Store name, image, and pixel length in parameters class
-    Params.Name = Name[:-7]
-    Params.Image = Image
-    Params.SegImage = SegImage
+    Parameters.Name = Name[:-7]
+    Parameters.Image = Image
+    Parameters.SegImage = SegImage
 
-    if Params.Name[:5] == '418RM':
-        Params.PixelLength = PixelSize(Params.Image[9400:-400, 12500:-300], 2000, Plot=True)
+    if Parameters.Name[:5] == '418RM':
+        Parameters.PixelLength = PixelSize(Parameters.Image[9400:-400, 12500:-300], 2000, Plot=True)
     else:
-        Params.PixelLength = 1.0460251046025104  # Computed with 418 RM
+        Parameters.PixelLength = 1.0460251046025104  # Computed with 418 RM
 
 def SegmentBone(Image, Plot=False):
     """
@@ -153,7 +157,7 @@ def SegmentBone(Image, Plot=False):
     """
 
     Tic = time.time()
-    print('Segment bone area ...')
+    print('\nSegment bone area ...')
 
     # Mark areas where there is bone
     Filter1 = Image[:, :, 0] < 190
@@ -201,6 +205,9 @@ def RandCoords(Coords, ROINumber, TotalNROIs):
 
 def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
 
+    Tic = time.time()
+    print('\nBegin ' + str(NROIs) + ' ROIs extraction ...')
+
     ROIs = np.zeros((NROIs,ROISize,ROISize,3)).astype('int')
     BoneROIs = np.zeros((NROIs,ROISize,ROISize)).astype('int')
     Xs = np.zeros((NROIs,2)).astype('int')
@@ -213,38 +220,44 @@ def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
         BoneROI = Bone[Y1:Y2, X1:X2]
         BVTV = BoneROI.sum() / BoneROI.size
 
-        while BVTV < Params.Threshold:
+        while BVTV < Parameters.Threshold:
             RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
             X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
             Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
             BoneROI = Bone[Y1:Y2, X1:X2]
             BVTV = BoneROI.sum() / BoneROI.size
 
-        ROIs[i] += Params.Image[Y1:Y2, X1:X2]
+        ROIs[i] += Parameters.Image[Y1:Y2, X1:X2]
         BoneROIs[i] += Bone[Y1:Y2, X1:X2]
         Xs[i] += [X1, X2]
         Ys[i] += [Y1, Y2]
 
+        if Plot:
+            Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+            Axis.imshow(ROIs[i])
+            Axis.axis('off')
+            plt.subplots_adjust(0, 0, 1, 1)
+            plt.show()
+
     if Plot:
-
-        Shape = np.array(Params.Image.shape[:-1]) / 1000
+        Shape = np.array(Parameters.Image.shape[:-1]) / 1000
         Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Params.Image)
-        Axis.plot([X1, X2], [Y1, Y1], color=(1, 0, 0))
-        Axis.plot([X2, X2], [Y1, Y2], color=(1, 0, 0))
-        Axis.plot([X2, X1], [Y2, Y2], color=(1, 0, 0))
-        Axis.plot([X1, X1], [Y2, Y1], color=(1, 0, 0))
+        Axis.imshow(Parameters.Image)
+
+        for i in range(len(Xs)):
+            Axis.plot([Xs[i,0], Xs[i,1]], [Ys[i,0], Ys[i,0]], color=(1, 0, 0))
+            Axis.plot([Xs[i,1], Xs[i,1]], [Ys[i,0], Ys[i,1]], color=(1, 0, 0))
+            Axis.plot([Xs[i,1], Xs[i,0]], [Ys[i,1], Ys[i,1]], color=(1, 0, 0))
+            Axis.plot([Xs[i,0], Xs[i,0]], [Ys[i,1], Ys[i,0]], color=(1, 0, 0))
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
         plt.show()
 
-        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
-        Axis.imshow(ROIs[i])
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic,Toc)
 
-    return ROIs, BoneROIs, Xs, Xs
+    return ROIs, BoneROIs, Xs, Ys
 
 def ExtractSkeleton(Image, Plot=False):
     """
@@ -256,7 +269,7 @@ def ExtractSkeleton(Image, Plot=False):
     """
 
     Tic = time.time()
-    print('Extract manual segmentation skeleton ...')
+    print('\nExtract manual segmentation skeleton ...')
 
     Filter1 = Image[:, :, 0] > 100
     Filter2 = Image[:, :, 1] < 90
@@ -273,15 +286,13 @@ def ExtractSkeleton(Image, Plot=False):
     Skeleton = morphology.skeletonize(BinDilate)
 
     if Plot:
-        Shape = np.array(Image.shape) / max(Image.shape) * 10
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
         Axis.imshow(Image)
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
         plt.show()
 
-        Shape = np.array(Skeleton.shape) / max(Skeleton.shape) * 10
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
         Axis.imshow(Skeleton, cmap='binary')
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
@@ -303,6 +314,63 @@ def NormalizeValues(Image):
     N_Image = (Image - Image.min()) / (Image.max() - Image.min())
 
     return N_Image
+
+def GetNeighbours(Array2D):
+    """
+    Function used to get values of the neighbourhood pixels (based on numpy.roll)
+    :param Array2D: Row x Column numpy array
+    :return: Neighbourhood pixels values
+    """
+
+    YSize, XSize = Array2D.shape[:-1]
+    Dimension = Array2D.shape[-1]
+
+    print('\nGet neighbours ...')
+    Tic = time.time()
+    Neighbourhood = np.zeros((YSize, XSize, 8, Dimension))
+    i = 0
+    for Shift in [-1, 1]:
+        for Axis in [0, 1]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            i += 1
+
+    for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+        for Axis in [(0, 1)]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            i += 1
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Neighbourhood
+
+def RBFUnit(Array2D, Plot=False):
+    """
+    Function used to get max spectral distance between pixel and its neighbourhood
+    :param Array2D: Row x Column numpy array
+    :return: Maximum distance
+    """
+
+    Neighbours = GetNeighbours(Array2D)
+
+    print('\nCompute distances ...')
+    Tic = time.time()
+
+    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8))
+    for i in range(8):
+        Distances[:, :, i] = np.linalg.norm(Array2D - Neighbours[:, :, i], axis=2)
+    Distances = np.max(Distances, axis=2)
+
+    if Plot:
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Distances, cmap='binary')
+        plt.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Distances
 
 def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=100):
     """
@@ -364,18 +432,33 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.05])):
 
     Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
 
-    for i in range(Params.ROIs.shape[0]):
-    Segmented = PCNN(Params.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
-    Values = np.unique(Segmented)
-    DensityDiff = np.zeros(len(Values))
-    for Index, Value in enumerate(Values):
-        Bin = (Segmented == Value) * 1
-        DensityDiff[Index] = abs(Params.Reference - Bin.sum() / Bin.size) / Params.Reference
+    NROIs = Results.ROIs.shape[0]
+    DensityDiff = np.zeros((NROIs,1000))
+    BinDensities = np.zeros((NROIs,1000))
 
-    if DensityDiff.min() < Params.MinCost:
-        Params.MinCost = DensityDiff.min()
-        Params.SegMin = DensityDiff.argmin()
-    return DensityDiff.min()
+    for i in range(NROIs):
+        Segmented = PCNN(Results.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+        Values = np.unique(Segmented)
+
+        for Index, Value in enumerate(Values):
+            Bin = (Segmented == Value) * 1
+            BinDensities[i,Index] = Bin.sum() / Bin.size
+            DensityDiff[i,Index] = abs(Results.Manuals[i] - BinDensities[i,Index]) / Results.Manuals[i]
+
+    DensityDiff[DensityDiff == 0.0] = np.nan
+    Sums = np.sum(DensityDiff, axis=0)
+    Cost = np.nanmin(Sums, axis=0)
+    Results.SegMin = np.where(Sums == Cost)[0][0]
+    Results.MinCosts = DensityDiff[:,Results.SegMin]
+    Results.Automatics = BinDensities[:,Results.SegMin]
+
+    # # Built data frame with mean values and corresponding mineral densities (see pdf)
+    # Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
+    #                          'Automatic': Results.Automatics})
+    #
+    # FitResults = smf.ols('Automatic ~ 1 + Manual', data=Data2Fit).fit()
+
+    return Cost
 
 def PlotRegressionResults(Model,Alpha=0.95):
 
@@ -409,13 +492,13 @@ def PlotRegressionResults(Model,Alpha=0.95):
     DPI = 100
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=DPI, sharey=True, sharex=True)
     Axes.plot(X[:,1], Y_Fit, color=(1,0,0), label='Fit')
-    Axes.fill_between(X_Obs, np.sort(CI_Line_o), np.sort(CI_Line_u), color=(0, 0, 0), alpha=0.1, label=str(int(Alpha*100)) + '% CI')
+    # Axes.fill_between(X_Obs, np.sort(CI_Line_o), np.sort(CI_Line_u), color=(0, 0, 0), alpha=0.1, label=str(int(Alpha*100)) + '% CI')
     Axes.plot(X[:,1], Y_Obs, linestyle='none', marker='o', color=(0,0,0), fillstyle='none')
     Axes.annotate(r'$N$  : ' + str(N), xy=(0.8, 0.175), xycoords='axes fraction')
     Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.8, 0.1), xycoords='axes fraction')
     Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.8, 0.025), xycoords='axes fraction')
-    Axes.set_ylabel('Mineral Density (mg HA/cm$^3$)')
-    Axes.set_xlabel('Gray Value (-)')
+    Axes.set_ylabel('Manual Segmentation')
+    Axes.set_xlabel('Automatic Segmentation')
     plt.subplots_adjust(left=0.15, bottom=0.15)
     plt.legend()
     plt.show()
@@ -423,16 +506,19 @@ def PlotRegressionResults(Model,Alpha=0.95):
 
 
 # Read Image
-Params = Parameters(2)
-ReadImage(Params)
+Parameters = ParameterClass(2)
+ReadImage(Parameters)
+
+NROIs = 5
+Results = ResultsClass(NROIs)
 
 # Segment bone and extract coordinate
-Bone = SegmentBone(Params.SegImage, Plot='Full')
+Bone = SegmentBone(Parameters.SegImage, Plot='Full')
 Y, X = np.where(Bone)
 
 # Set ROI pixel size
 PhysicalSize = 1000
-ROISize = int(round(PhysicalSize / Params.PixelLength))
+ROISize = int(round(PhysicalSize / Parameters.PixelLength))
 
 # Filter positions too close to the border
 F1 = X > ROISize / 2
@@ -446,22 +532,22 @@ FilteredY = FilteredY[F1 & F2]
 FilteredX = FilteredX[F1 & F2]
 
 # Extract random ROI and verify validity
-NROIs = 2
 ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
 
 # Extract manual segmentation and compute CM density
 Skeletons = np.zeros(BoneROIs.shape)
-References = np.zeros(NROIs)
+Manuals = np.zeros(NROIs)
 for i in range(NROIs):
-    Skeletons[i] += ExtractSkeleton(Params.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=True)
-    References[i] += Skeletons[i].sum() / BoneROIs[i].sum()
-Params.Reference = References
+    Skeletons[i] += ExtractSkeleton(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=True)
+    Manuals[i] += Skeletons[i].sum() / BoneROIs[i].sum()
+Results.Manuals = Manuals
 
-# Convert ROI into gray scale image
-Grays = np.zeros(BoneROIs.shape)
+# Compute distance between pixel and its neighbours
+Distances = np.zeros(BoneROIs.shape)
 for i in range(NROIs):
-    Grays[i] = color.rgb2gray(ROIs[i])
-Params.ROIs = Grays
+    Distances[i] = RBFUnit(ROIs[i], Plot=True)
+Results.ROIs = Distances
+
 
 
 # Run PSO for PCNN parameters
@@ -471,39 +557,24 @@ Cs = [0.15, 0.1]
 Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20)
 PSOResults = PSO.Main(Arguments, Evolution=True)
 
-# Plot results
-Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
-Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
-Values = np.unique(Segmented)
-Bin = (Segmented == Values[Params.SegMin]) * 1
-PlotArray(Bin, 'Segment ' + str(Params.SegMin))
-
-print('Reference value: ' + str(Params.Reference))
-print('Final value: ' + str(Bin.sum() / Bin.size))
-print('Relative difference: ' + str(Params.MinCost))
-
-
-
-# Verifiy correlation between automatic and manual segmentation
-Manuals = Bin.sum() / Bin.size
-Automatic = Params.Reference
-
-for i in range(10):
-    ROI, BoneROI, [X1,X2], [Y1,Y2] = ExtractROI(Bone, FilteredX, FilteredY)
-    Skeleton = ExtractSkeleton(Params.SegImage[Y1:Y2, X1:X2], Plot=True)
-    PlotArray(Skeleton, 'Skeleton')
-    Manuals = np.append(Manuals, Skeleton.sum() / BoneROI.sum())
-
-    Params.ROI = color.rgb2lab(ROI)[:, :, 2]
-    Segmented = PCNN(Params.ROI, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
-    Values = np.unique(Segmented)
-    Bin = (Segmented == Values[Params.SegMin]) * 1
-    PlotArray(Bin, 'Segment ' + str(Params.SegMin))
-    Automatic = np.append(Automatic, Bin.sum() / Bin.size)
-
-# Built data frame with mean values and corresponding mineral densities (see pdf)
-Data2Fit = pd.DataFrame({'Manual': Manuals,
-                         'Automatic': Automatic})
+# Check PSO results
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
+                         'Automatic': Results.Automatics})
 
 FitResults = smf.ols('Automatic ~ 1 + Manual', data=Data2Fit).fit()
 PlotRegressionResults(FitResults)
+
+# Plot results
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
+
+for i in range(NROIs):
+    Segmented = PCNN(Results.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+    Values = np.unique(Segmented)
+    Bin = (Segmented == Values[33]) * 1
+    Density = Bin.sum() / Bin.size
+    PlotArray(Bin, 'Segment ' + str(33))
+
+    print('Manual segmentation value: ' + str(Results.Manuals[i]))
+    print('Automatic segmentation value: ' + str(Density))
+    print('Relative difference: ' + str((Results.Manuals[i]-Density) / Results.Manuals[i]))
+
