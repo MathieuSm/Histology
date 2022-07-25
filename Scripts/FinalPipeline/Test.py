@@ -78,6 +78,36 @@ def ComputeDistances(Array2D):
 
     return Distances
 
+def ComputePSPs(Distances,Threshold=1/52):
+
+    """
+    Function used to compute discrete Post-Synaptic Potentials
+    :param Distances: MxNxO-dimensional numpy array containing inter-pixel distances
+    :param Threshold: Constant threshold reached by all synapses
+    :return: PSPs: Discretes Post-Synaptic Potentials
+    """
+
+    # Record elapsed time
+    Tic = time.time()
+    print('Compute PSPs ...')
+
+    # Compute time necessary for all synapses to fire
+    N = Distances.shape[-1]
+    Time = Threshold/N + Distances.sum(axis=2)/N
+    MaxTime = np.ceil(Time.max()).astype('int')
+
+    # Compute PSPs at discrete times
+    Size = Distances.shape[0]
+    PSPs = np.zeros((Size,Size,MaxTime+1,N))
+    for Time in range(1,MaxTime+1):
+        PSPs[:,:,Time][Distances > Time] = Time - Distances[Distances > Time]
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic,Toc)
+
+    return PSPs
+
 def NormalizeValues(Image):
     """
     Normalize image values, used in PCNN for easier parameters handling
@@ -144,9 +174,16 @@ Array = ROIs[0]
 PlotImage(Array)
 
 Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
 PlotImage(Filtered)
 
 Distances = ComputeDistances(Filtered)
+
+PSPs = ComputePSPs(Distances)
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(PSPs.sum(axis=(3,0,1)),marker='o')
+plt.show()
+
 MaxDistances = np.max(Distances,axis=2)
 Histogram(MaxDistances, Plot=True)
 PlotImage(MaxDistances)

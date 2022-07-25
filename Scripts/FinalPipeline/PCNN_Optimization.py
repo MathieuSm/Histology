@@ -509,7 +509,7 @@ def PlotRegressionResults(Model,Alpha=0.95):
 Parameters = ParameterClass(2)
 ReadImage(Parameters)
 
-NROIs = 5
+NROIs = 1
 Results = ResultsClass(NROIs)
 
 # Segment bone and extract coordinate
