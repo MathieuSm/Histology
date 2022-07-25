@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from skimage import filters
+from skimage import filters, measure
 import matplotlib.pyplot as plt
 
 def PlotImage(Array):
@@ -36,6 +36,9 @@ def GetNeighbours(Array2D):
     :return: Neighbourhood pixels values
     """
 
+    # Define a map for the neighbour index computation
+    Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
+
     YSize, XSize = Array2D.shape[:-1]
     Dimension = Array2D.shape[-1]
 
@@ -55,7 +58,7 @@ def GetNeighbours(Array2D):
     Toc = time.time()
     PrintTime(Tic, Toc)
 
-    return Neighbourhood
+    return Neighbourhood, Map
 
 def ComputeDistances(Array2D):
     """
@@ -64,7 +67,7 @@ def ComputeDistances(Array2D):
     :return: Maximum distance
     """
 
-    Neighbours = GetNeighbours(Array2D)
+    Neighbours, Map = GetNeighbours(Array2D)
 
     print('\nCompute distances ...')
     Tic = time.time()
@@ -76,7 +79,7 @@ def ComputeDistances(Array2D):
     Toc = time.time()
     PrintTime(Tic, Toc)
 
-    return Distances
+    return Distances, Map
 
 def ComputePSPs(Distances,Threshold=1/52):
 
@@ -100,7 +103,7 @@ def ComputePSPs(Distances,Threshold=1/52):
     Size = Distances.shape[0]
     PSPs = np.zeros((Size,Size,MaxTime+1,N))
     for Time in range(1,MaxTime+1):
-        PSPs[:,:,Time][Distances > Time] = Time - Distances[Distances > Time]
+        PSPs[:,:,Time][Time >= Distances] = Time - Distances[Time >= Distances]
 
     # Print elapsed time
     Toc = time.time()
@@ -169,28 +172,47 @@ def Histogram(Array,NBins=256,Plot=False):
 
     return H, Bins
 
-
-Array = ROIs[0]
+Array = np.round(20 * np.random.randn((5,5,3)) + 128).astype('uint8')
+Array[1:4,1:4] = [255,255,255]
+Array[0,4] = [255, 255, 255]
 PlotImage(Array)
 
-Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
-Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
-PlotImage(Filtered)
+# Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
+# Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+# PlotImage(Filtered)
 
-Distances = ComputeDistances(Filtered)
+Distances, Map = ComputeDistances(Array)
 
 PSPs = ComputePSPs(Distances)
+PlotImage(PSPs.sum(axis=3)[:,:,-1])
+
 Figure, Axis = plt.subplots(1,1)
 Axis.plot(PSPs.sum(axis=(3,0,1)),marker='o')
 plt.show()
 
-MaxDistances = np.max(Distances,axis=2)
-Histogram(MaxDistances, Plot=True)
-PlotImage(MaxDistances)
-
-Seeded = np.zeros(MaxDistances.shape)
-Threshold = 10
-Seeded[MaxDistances < Threshold] = 1
+Links = PSPs[:,:,-1] == np.max(PSPs[:,:,-1])
+Seeded = Links.sum(axis=2) == 8
 PlotImage(Seeded)
 
-# Reproduce MPCNN step from paper
+Py, Px = np.where(Seeded)
+Shifts = np.repeat(Links[Py,Px],2).reshape((8,2))
+LP = np.array([Py,Px]).T+Map*Shifts
+Linked = np.zeros(Seeded.shape).astype('bool')
+Linked[LP[:,0],LP[:,1]] = 1
+PlotImage(Linked)
+
+Merge = np.zeros(Seeded.shape)
+Merge[Seeded | Linked] = 1
+PlotImage(Merge)
+
+Labels = np.unique(measure.label(Merge))[1:]
+Means = np.zeros((len(Labels),3))
+for Label in Labels:
+    Group = Array[Merge == Label]
+    Means[Label-1] = np.mean(Group, axis=0)
+    Array[Merge == Label] = Means[Label-1]
+
+P = np.array([82,417])
+Positions = np.repeat(Links[P[0], P[1]],2).reshape((8,2)) * (P + Map)
+
+
