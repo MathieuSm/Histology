@@ -72,44 +72,81 @@ def ComputeDistances(Array2D):
     print('\nCompute distances ...')
     Tic = time.time()
 
-    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8))
+    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8, 3))
     for i in range(8):
-        Distances[:, :, i] = np.linalg.norm(Array2D - Neighbours[:, :, i], axis=2)
+        Distances[:, :, i] = np.abs(Array2D - Neighbours[:, :, i])
 
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     return Distances, Map
 
-def ComputePSPs(Distances,Threshold=256/52):
+def PSP_j(t, Distances):
+
+    PSP = np.zeros(Distances.shape)
+    PSP[t >= Distances] = t - Distances[t >= Distances]
+    return PSP.sum(axis=1)
+
+def FiringTimes(Distances,Threshold=1):
 
     """
-    Function used to compute discrete PostSynaptic Potentials
+    Function used to compute firing times of individual neighbour neurons
     :param Distances: MxNxO-dimensional numpy array containing inter-pixel distances
     :param Threshold: Constant threshold reached by all synapses
-    :return: PSPs: Discretes Post-Synaptic Potentials
+    :return: Times: Individual neighbour neurons firing times
     """
 
     # Record elapsed time
     Tic = time.time()
-    print('\nCompute PSPs ...')
+    print('\nCompute firing times ...')
 
     # Compute time necessary for all synapses to fire
-    Ni = 3
-    Time = Threshold/Ni + Distances/Ni
-    MaxTime = np.ceil(Time.max()).astype('int')
-
-    # Compute PSPs at discrete times
-    Size = Distances.shape[0]
-    PSPs = np.zeros((Size,Size,MaxTime+1,N))
-    for Time in range(1,MaxTime+1):
-        PSPs[:,:,Time][Time >= Distances] = Time - Distances[Time >= Distances]
+    Ni = Distances.shape[-1]
+    Times = Threshold/Ni + Distances.sum(axis=3)/Ni
 
     # Print elapsed time
     Toc = time.time()
     PrintTime(Tic,Toc)
 
-    return PSPs
+    return Times
+
+def FastLinking(Seeded, Map):
+
+    """
+    Perform fast linking of direct neighbours using np.where (faster than morphology.binary_dilation from skimage)
+    :param Seeded: 2D numpy array containing seeded pixels, background is labelled 0
+    :param Map: Mapping of the neighbours to link
+    :return: Linked: 2D numpy array with all linked pixels labelled as 1
+    """
+
+    # Record elapsed time
+    Tic = time.time()
+    print('\nPerform fast linking ...')
+
+    # Create linked array
+    Linked = np.zeros(Seeded.shape)
+
+    # Extract seeded pixel positions and find corresponding neighbours
+    Py, Px = np.where(Seeded)
+    Positions = np.repeat(np.vstack([Py,Px]).T,len(Map),axis=0)
+    Links = Positions + np.tile(Map.T, len(Py)).T
+
+    # Set out-of-border neighbours to array start index
+    Links[:,0][Links[:,0] == Seeded.shape[0]] = 0
+    Links[:,1][Links[:,1] == Seeded.shape[1]] = 0
+
+    # Label linked pixels
+    Linked[Links[:,0], Links[:,1]] = 1
+
+    # Reshape coordinate vectors
+    Positions = np.reshape(Positions,(len(Py),8,2))
+    Links = np.reshape(Links,(len(Py),8,2))
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Positions, Links, Linked
 
 def NormalizeValues(Image):
     """
@@ -175,6 +212,9 @@ def Histogram(Array,NBins=256,Plot=False):
 Array = np.round(50 * np.random.randn(5,5,3) + 128).astype('uint8')
 Array[1:4,1:4] = [200,200,200]
 Array[0,4] = [200, 200, 200]
+Array = np.zeros((5,5))
+Array[2,2] = 1
+
 Array = io.imread('TestROI.png')
 PlotImage(Array)
 
@@ -182,52 +222,67 @@ Filtered = filters.gaussian(Array,sigma=3,multichannel=True)
 Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
 PlotImage(Filtered)
 
+# Compute distances in individual RGB dimensions
 Distances, Map = ComputeDistances(Filtered)
 
-Threshold = 256 / 52
-Seeded = np.max(Distances,axis=2) < Threshold
+# Compute neurons firing time to assess rank order
+Times = FiringTimes(Distances)
+
+# Define seeded pixels and neurons using Manhattan distance
+Threshold = 1 / 52
+Manhattan = Distances.sum(axis=3)
+Seeded = np.max(Manhattan,axis=2) < Threshold
 PlotImage(Seeded)
 
-Py, Px = np.where(Seeded)
-Linked = np.zeros(Seeded.shape).astype('bool')
-Linked[Py,Px] = 1
-Ly = np.repeat(Py,len(Map)) + np.tile(Map.T,len(Py))[0,:]
-Lx = np.repeat(Px,len(Map)) + np.tile(Map.T,len(Px))[1,:]
-Ly[Ly == Array.shape[0]] = 0
-Lx[Lx == Array.shape[1]] = 0
-Linked[Ly,Lx] = 1
+# Perform fast linking method 1
+Positions, Links, Linked = FastLinking(Seeded, Map)
 PlotImage(Linked)
 
-Array[Py,Px]
-
-
-PSPs = ComputePSPs(Distances)
-PlotImage(PSPs.sum(axis=3)[:,:,-1])
-
-Figure, Axis = plt.subplots(1,1)
-Axis.plot(PSPs.sum(axis=(3,0,1)),marker='o')
-plt.show()
-
-Links = PSPs[:,:,-1] == np.max(PSPs[:,:,-1])
-Seeded = Links.sum(axis=2) == 8
-PlotImage(Seeded)
-
-Py, Px, Shifts = np.where(Links)
-Linked = np.zeros(Seeded.shape).astype('bool')
-Linked[Py,Px] = 1
-PlotImage(Linked)
-
+# Compute mean group value
 Groups = measure.label(Linked,connectivity=2)
 Labels = np.unique(Groups)[1:]
 Means = np.zeros((len(Labels),3)).astype('uint8')
 Tic = time.time()
+Segmented = Filtered.copy()
 for Label in Labels:
-    Group = Array[Groups == Label]
+    Group = Filtered[Groups == Label]
     Means[Label-1] = np.mean(Group, axis=0).round().astype('uint8')
-    Array[Groups == Label] = Means[Label-1]
+    Segmented[Groups == Label] = Means[Label-1]
 Toc = time.time()
 PrintTime(Tic,Toc)
-PlotImage(Array)
+PlotImage(Segmented)
+
+# Unlinked neuron having a linked neighbour
+UnPositions, UnLinks, UnLinked = FastLinking(Linked, Map)
+UnLinked = UnLinked - Linked*1
+PlotImage(UnLinked)
+
+# Unlinked neurons values
+NeuronsValues = Times[UnLinked.astype('bool')]
+NeuronsDistances, Map = ComputeDistances(Segmented)
+NeuronsDistances[UnLinked.astype('bool')][0]
+
+# Extract linked groups
+LinkedGroups = Groups[UnLinks[0,:,0],UnLinks[0,:,1]]
+# Find labelled group with minimal difference
+ClosestGroup = np.argmin(NeuronsValues[0][LinkedGroups.astype('bool')])
+# Attribute label of the closest group to the linked neuron
+Groups[UnLinks[0,0,0],UnLinks[0,0,1]] = LinkedGroups[LinkedGroups.astype('bool')][ClosestGroup]
+
+
+
+
+# Extract latest output pulse timing
+SeededNeurons = np.repeat(Seeded,8).reshape((Times.shape))
+MaxTime = np.max(Times * SeededNeurons)
+Linked = np.sum(Times <= MaxTime,axis=2).astype('bool')
+PlotImage(Linked)
+
+
+
+Array[Py,Px]
+
+
 
 
 LP = np.array([Py,Px]).T+Map[Shifts]
