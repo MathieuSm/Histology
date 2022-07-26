@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from skimage import filters, measure
+from skimage import io, filters, measure
 import matplotlib.pyplot as plt
 
 def PlotImage(Array):
@@ -81,10 +81,10 @@ def ComputeDistances(Array2D):
 
     return Distances, Map
 
-def ComputePSPs(Distances,Threshold=1/52):
+def ComputePSPs(Distances,Threshold=256/52):
 
     """
-    Function used to compute discrete Post-Synaptic Potentials
+    Function used to compute discrete PostSynaptic Potentials
     :param Distances: MxNxO-dimensional numpy array containing inter-pixel distances
     :param Threshold: Constant threshold reached by all synapses
     :return: PSPs: Discretes Post-Synaptic Potentials
@@ -92,11 +92,11 @@ def ComputePSPs(Distances,Threshold=1/52):
 
     # Record elapsed time
     Tic = time.time()
-    print('Compute PSPs ...')
+    print('\nCompute PSPs ...')
 
     # Compute time necessary for all synapses to fire
-    N = Distances.shape[-1]
-    Time = Threshold/N + Distances.sum(axis=2)/N
+    Ni = 3
+    Time = Threshold/Ni + Distances/Ni
     MaxTime = np.ceil(Time.max()).astype('int')
 
     # Compute PSPs at discrete times
@@ -172,16 +172,34 @@ def Histogram(Array,NBins=256,Plot=False):
 
     return H, Bins
 
-Array = np.round(20 * np.random.randn((5,5,3)) + 128).astype('uint8')
-Array[1:4,1:4] = [255,255,255]
-Array[0,4] = [255, 255, 255]
+Array = np.round(50 * np.random.randn(5,5,3) + 128).astype('uint8')
+Array[1:4,1:4] = [200,200,200]
+Array[0,4] = [200, 200, 200]
+Array = io.imread('TestROI.png')
 PlotImage(Array)
 
-# Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
-# Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
-# PlotImage(Filtered)
+Filtered = filters.gaussian(Array,sigma=3,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+PlotImage(Filtered)
 
-Distances, Map = ComputeDistances(Array)
+Distances, Map = ComputeDistances(Filtered)
+
+Threshold = 256 / 52
+Seeded = np.max(Distances,axis=2) < Threshold
+PlotImage(Seeded)
+
+Py, Px = np.where(Seeded)
+Linked = np.zeros(Seeded.shape).astype('bool')
+Linked[Py,Px] = 1
+Ly = np.repeat(Py,len(Map)) + np.tile(Map.T,len(Py))[0,:]
+Lx = np.repeat(Px,len(Map)) + np.tile(Map.T,len(Px))[1,:]
+Ly[Ly == Array.shape[0]] = 0
+Lx[Lx == Array.shape[1]] = 0
+Linked[Ly,Lx] = 1
+PlotImage(Linked)
+
+Array[Py,Px]
+
 
 PSPs = ComputePSPs(Distances)
 PlotImage(PSPs.sum(axis=3)[:,:,-1])
@@ -194,6 +212,27 @@ Links = PSPs[:,:,-1] == np.max(PSPs[:,:,-1])
 Seeded = Links.sum(axis=2) == 8
 PlotImage(Seeded)
 
+Py, Px, Shifts = np.where(Links)
+Linked = np.zeros(Seeded.shape).astype('bool')
+Linked[Py,Px] = 1
+PlotImage(Linked)
+
+Groups = measure.label(Linked,connectivity=2)
+Labels = np.unique(Groups)[1:]
+Means = np.zeros((len(Labels),3)).astype('uint8')
+Tic = time.time()
+for Label in Labels:
+    Group = Array[Groups == Label]
+    Means[Label-1] = np.mean(Group, axis=0).round().astype('uint8')
+    Array[Groups == Label] = Means[Label-1]
+Toc = time.time()
+PrintTime(Tic,Toc)
+PlotImage(Array)
+
+
+LP = np.array([Py,Px]).T+Map[Shifts]
+LP[LP == Links.shape[0]] = 0
+
 Py, Px = np.where(Seeded)
 Shifts = np.repeat(Links[Py,Px],2).reshape((8,2))
 LP = np.array([Py,Px]).T+Map*Shifts
@@ -204,13 +243,6 @@ PlotImage(Linked)
 Merge = np.zeros(Seeded.shape)
 Merge[Seeded | Linked] = 1
 PlotImage(Merge)
-
-Labels = np.unique(measure.label(Merge))[1:]
-Means = np.zeros((len(Labels),3))
-for Label in Labels:
-    Group = Array[Merge == Label]
-    Means[Label-1] = np.mean(Group, axis=0)
-    Array[Merge == Label] = Means[Label-1]
 
 P = np.array([82,417])
 Positions = np.repeat(Links[P[0], P[1]],2).reshape((8,2)) * (P + Map)
