@@ -7,361 +7,531 @@ Multichannel pulse-coupled-neural-network-based color image segmentation for obj
 IEEE Transactions on Industrial Electronics, 59(8), 3299–3308
 https://doi.org/10.1109/TIE.2011.2165451
 """
-
-import os
 import time
 import numpy as np
-import SimpleITK as sitk
+import pandas as pd
 import matplotlib.pyplot as plt
+from skimage.future import graph
+from skimage.feature import canny
 from scipy.ndimage import correlate
-from skimage import measure
+from skimage import io, color,  filters, measure, morphology
 
+def PlotImage(Array):
+
+    Figure, Axis = plt.subplots(1,1,figsize=(10,10))
+    if Array.shape[-1] == 3:
+        Axis.imshow(Array)
+    else:
+        Axis.imshow(Array, cmap='binary_r')
+    Axis.axis('off')
+    plt.subplots_adjust(0,0,1,1)
+    plt.show()
+
+def PrintTime(Tic, Toc):
+    """
+    Print elapsed time in seconds to time in HH:MM:SS format
+    :param Tic: Actual time at the beginning of the process
+    :param Toc: Actual time at the end of the process
+    """
+
+    Delta = Toc - Tic
+
+    Hours = np.floor(Delta / 60 / 60)
+    Minutes = np.floor(Delta / 60) - 60 * Hours
+    Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
+
+    print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+
+def GetNeighbours(Array2D):
+    """
+    Function used to get values of the neighbourhood pixels (based on numpy.roll)
+    :param Array2D: Row x Column numpy array
+    :return: Neighbourhood pixels values
+    """
+
+    # Define a map for the neighbour index computation
+    Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
+
+    if len(Array2D.shape) > 2:
+        YSize, XSize = Array2D.shape[:-1]
+        Dimension = Array2D.shape[-1]
+        Neighbourhood = np.zeros((YSize, XSize, 8, Dimension))
+    else:
+        YSize, XSize = Array2D.shape
+        Neighbourhood = np.zeros((YSize, XSize, 8))
+
+    print('\nGet neighbours ...')
+    Tic = time.time()
+    i = 0
+    for Shift in [-1, 1]:
+        for Axis in [0, 1]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            i += 1
+
+    for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+        for Axis in [(0, 1)]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            i += 1
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Neighbourhood, Map
+
+def ComputeDistances(Array2D):
+    """
+    Function used to get max spectral distance between pixel and its neighbourhood
+    :param Array2D: Row x Column numpy array
+    :return: Maximum distance
+    """
+
+    Neighbours, Map = GetNeighbours(Array2D)
+
+    print('\nCompute distances ...')
+    Tic = time.time()
+
+    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8, 3))
+    for i in range(8):
+        Distances[:, :, i] = np.abs(Array2D - Neighbours[:, :, i])
+
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Distances, Map
+
+def PSP_j(t, Distances):
+
+    PSP = np.zeros(Distances.shape)
+    PSP[t >= Distances] = t - Distances[t >= Distances]
+    return PSP.sum(axis=1)
+
+def FiringTimes(Distances,Threshold=1):
+
+    """
+    Function used to compute firing times of individual neighbour neurons
+    :param Distances: MxNxO-dimensional numpy array containing inter-pixel distances
+    :param Threshold: Constant threshold reached by all synapses
+    :return: Times: Individual neighbour neurons firing times
+    """
+
+    # Record elapsed time
+    Tic = time.time()
+    print('\nCompute firing times ...')
+
+    # Compute time necessary for all synapses to fire
+    Ni = Distances.shape[-1]
+    Times = Threshold/Ni + Distances.sum(axis=3)/Ni
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic,Toc)
+
+    return Times
+
+def FastLinking(Seeded, Map, NewLinksOnly=False):
+
+    """
+    Perform fast linking of direct neighbours using np.where (faster than morphology.binary_dilation from skimage)
+    :param Seeded: 2D numpy array containing seeded pixels, background is labelled 0
+    :param Map: Mapping of the neighbours to link
+    :return: Linked: 2D numpy array with all linked pixels labelled as 1
+    """
+
+    # Record elapsed time
+    Tic = time.time()
+    print('\nPerform fast linking ...')
+
+    # Create linked array
+    Linked = np.zeros(Seeded.shape)
+
+    # Extract seeded pixel positions and find corresponding neighbours
+    Py, Px = np.where(Seeded)
+    Positions = np.repeat(np.vstack([Py,Px]).T,len(Map),axis=0)
+    Links = Positions + np.tile(Map.T, len(Py)).T
+
+    # Set out-of-border neighbours to array start index
+    Links[:,0][Links[:,0] == Seeded.shape[0]] = 0
+    Links[:,1][Links[:,1] == Seeded.shape[1]] = 0
+
+    # Label linked pixels
+    Linked[Links[:,0], Links[:,1]] = 1
+
+    # Unlabel seeded pixels
+    if NewLinksOnly:
+        Linked = Linked - Seeded * 1
+        Linked[Linked < 0] = 0
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Linked
+
+def RegionGrowing(Linked, Groups, Times, Edges):
+
+    # Record elapsed time
+    Tic = time.time()
+    print('\nPerform region growing ...')
+
+    DistanceThreshold = 0
+    DeltaDistance = 1
+    i = 0
+    Sum = 0
+    while Linked.sum() < Linked.size:
+
+        # Unlinked neuron having a linked neighbour
+        UnLinked = FastLinking(Linked, Map, NewLinksOnly=True)
+
+        # # Remove edge pixels
+        # if Linked.size - Edges.sum() > Linked.sum() > Sum:
+        #     UnLinked = UnLinked - Edges*1
+        #     UnLinked[UnLinked < 0] = 0
+
+        # Unlinked neurons values
+        UnlinkTimes = Times[UnLinked.astype('bool')]
+
+        # Extract linked groups
+        NeighbourGroups = GetNeighbours(Groups)[0]
+        LinkedGroups = NeighbourGroups[UnLinked.astype('bool')]
+        LinkedGroups[LinkedGroups == 0] = np.nan
+
+        # Find labelled group with minimal difference
+        ClosestGroup = np.nanargmin(UnlinkTimes * LinkedGroups, axis=1)
+
+        # Check that distance between the closest group and unlinked pixel is not too high
+        ClosestDistance = UnlinkTimes[np.arange(len(ClosestGroup)), ClosestGroup]
+        DistanceThreshold += DeltaDistance
+        CloseEnough = np.where(ClosestDistance < DistanceThreshold)[0]
+
+        # Attribute label of the closest group to the linked neuron
+        ClosestGroups = LinkedGroups[np.arange(len(ClosestGroup)), ClosestGroup]
+        Ly, Lx = np.where(UnLinked)
+        Groups[Ly[CloseEnough], Lx[CloseEnough]] = ClosestGroups[CloseEnough]
+
+        # Set those neurons as linked
+        Sum = Linked.sum()
+        Linked[Ly[CloseEnough], Lx[CloseEnough]] = 1
+
+        # Print elapsed time
+        Toc = time.time()
+        print('\nIteration number: ' + str(i))
+        PrintTime(Tic, Toc)
+
+        # Update iteration number
+        i += 1
+
+    return Groups
+
+def MeansGroupsValues(Groups, Array):
+
+    """
+    Function to compute mean values of labelled groups in a 2D image
+    :param Groups: 2D numpy array of labels
+    :param Array: 2D numpy array of the image
+    :return: Mean values for each group and the resulting segmented image
+    """
+
+    # Record elapsed time
+    Tic = time.time()
+    print('\nCompute mean value of each group ...')
+
+    Segmented = Array.copy()
+    Labels = np.unique(Groups)
+    Means = np.zeros((len(Labels), 3)).astype('uint8')
+
+    for Label in Labels:
+        Group = Array[Groups == Label]
+        Means[Label-1] = np.mean(Group, axis=0).round().astype('uint8')
+        Segmented[Groups == Label] = Means[Label-1]
+
+    Segmented[Groups == 0] = [0,0,0]
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Means, Segmented
 
 def NormalizeValues(Image):
-
     """
     Normalize image values, used in PCNN for easier parameters handling
     :param Image: Original grayscale image
     :return: N_Image: Image with 0,1 normalized values
     """
 
-    N_Image = (Image - Image.min()) / (Image.max()-Image.min())
+    N_Image = (Image - Image.min()) / (Image.max() - Image.min())
 
     return N_Image
-def ManhattanDistance(x,c):
+
+def SPCNN_Edges(Image,Beta=2,Delta=1/255,VT=100):
+
     """
-    Compute Euclidian distance between vectors
-    :param x: n-dimensional vector (numpy array)
-    :param c: n-dimensional vector (numpy array)
-    :return: d: distance between vectors
+    Image edge detection using simplified PCNN and single neuron firing
+    Based on:
+    Shi, Z., Hu, J. (2010)
+    Image edge detection method based on A simplified PCNN model with anisotropic linking mechanism
+    Proceedings of the 2010 10th International Conference on Intelligent Systems Design and Applications, ISDA’10, 330–335
+    https://doi.org/10.1109/ISDA.2010.5687242
+
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param Delta: Linear decay factor for threshold level
+    :param VT: Dynamic threshold amplitude
+    :return: H: Image histogram in numpy array
     """
 
-    d = sum(np.abs(x-c))
+    Tic = time.time()
+    print('\nPCNN edges detection ...')
 
-    return d
-def PlotArray(Array, Title, ColorBar=False):
+    # Initialize parameters
+    S = NormalizeValues(Image)
+    Rows, Columns = S.shape
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
+    W = np.array([[0.5, 1, 0.5],
+                  [1, 0, 1],
+                  [0.5, 1, 0.5]])
+    Theta = np.ones((Rows, Columns))
 
-    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-    CBar = Axes.imshow(Array, cmap='gray')
-    if ColorBar:
-        plt.colorbar(CBar)
-    plt.title(Title)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-    plt.close(Figure)
+    FiredNumber = 0
+    N = 0
 
-    return
+    # Perform analysis
+    while FiredNumber < S.size:
+
+        N += 1
+        F = S
+        L = correlate(Y, W, output='float', mode='reflect')
+        Theta = Theta - Delta + VT * Y
+
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+
+        FiredNumber = FiredNumber + sum(sum(Y))
+
+        MedianFilter = np.array([[1,1,1],[1,1,1],[1,1,1]]) / 9
+        Y = correlate(Y,MedianFilter,output='int',mode='reflect')
+
+        T = T + N * Y
 
 
-desired_width = 500
-np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
-plt.rc('font', size=12)
+    Output = 1 - NormalizeValues(T)
 
-CurrentDirectory = os.getcwd()
-DataDirectory = os.path.join(CurrentDirectory,'Scripts/PCNN/')
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
 
-# Read input
-Input_Image = sitk.ReadImage(DataDirectory + 'Lena.jpg')
-Input_Array = sitk.GetArrayFromImage(Input_Image).astype('int')
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Input_Array)
-plt.axis('off')
-plt.title('Input')
-plt.tight_layout()
+    return Output
+
+def GaussianKernel(Length=5, Sigma=1.):
+    """
+    Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+    """
+    Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+    Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+    Kernel = np.outer(Gauss, Gauss)
+    return Kernel / sum(sum(Kernel))
+
+def Enhancement(Image, d=2, h=2E10, g=0.9811, Alpha=0.01, Beta=0.03):
+
+    """
+    Perform image enhancement using Feature Linking Model (FLM)
+    Based on:
+    Zhan, K., Shi, J., Wang, H. et al.
+    Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+    Arch Computat Methods Eng 24, 573–588 (2017).
+    https://doi.org/10.1007/s11831-016-9182-3
+
+    :param: d: Inhibition factor for linkin wave
+    :param: h: Amplitude factor for threshold excitation
+    :param: g: Decay factor for threshold
+    :param: Alpha: Decay factor for linkin input
+    :param: Beta: Decay factor for external input
+    :return: Y: Restored Image
+    """
+
+    Tic = time.time()
+    print('\nPerform image enhancement...')
+
+    # Initialization
+    S = NormalizeValues(Image) + 1/255
+    W = np.array([[0.7, 1, 0.7], [1, 0, 1], [0.7, 1, 0.7]])
+    Y = np.zeros(S.shape)
+    U = np.zeros(S.shape)
+    T = np.zeros(S.shape)
+    SumY = 0
+    N = 0
+
+    Laplacian = np.array([[1 / 6, 2 / 3, 1 / 6], [2 / 3, -10 / 3, 2 / 3], [1 / 6, 2 / 3, 1 / 6]])
+    Theta = 1 + correlate(S, Laplacian, mode='reflect')
+    f = 0.75 * np.exp(-S ** 2 / 0.16) + 0.05
+    G = GaussianKernel(3, 1)
+    f = correlate(f, G, mode='reflect')
+
+    # Analysis
+    while SumY < S.size:
+        N += 1
+
+        K = correlate(Y, W, mode='reflect')
+        Wave = Alpha * K + Beta * S * (K - d)
+        U = f * U + S + Wave
+        Theta = g * Theta + h * Y
+        Y = (U > Theta) * 1
+        T += N * Y
+        SumY += sum(sum(Y))
+
+    T_inv = T.max() + 1 - T
+
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return T_inv
+
+
+Array = io.imread('TestROI.png')
+PlotImage(Array)
+
+Test = Array.copy()
+F1 = Test[:,:,0] < 120
+F2 = Test[:,:,1] < 120
+F3 = Test[:,:,2] < 180
+F4 = Test[:,:,2] > 160
+Edges = F1*F2*F3*F4
+PlotImage(Edges)
+
+Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+PlotImage(Filtered)
+
+Filtered = Filtered * np.repeat(1-Edges,3).reshape(Filtered.shape)
+
+
+def enhance_contrast(image_matrix, bins=256):
+    image_flattened = image_matrix.flatten()
+    image_hist = np.zeros(bins)
+
+    # frequency count of each pixel
+    for pix in image_matrix:
+        image_hist[pix] += 1
+
+    # cummulative sum
+    cum_sum = np.cumsum(image_hist)
+    norm = (cum_sum - cum_sum.min()) * 255
+    # normalization of the pixel values
+    n_ = cum_sum.max() - cum_sum.min()
+    uniform_norm = norm / n_
+    uniform_norm = uniform_norm.astype('int')
+
+    # flat histogram
+    image_eq = uniform_norm[image_flattened]
+    # reshaping the flattened matrix to its original shape
+    image_eq = np.reshape(a=image_eq, newshape=image_matrix.shape)
+
+    return image_eq
+HSV = color.rgb2hsv(Filtered)
+I = np.round(HSV[:,:,2]/HSV[:,:,2].max()*255).astype('uint8')
+PlotImage(I)
+Enhanced = enhance_contrast(I)/255
+PlotImage(Enhanced)
+Enhanced = color.hsv2rgb(np.dstack([HSV[:,:,0], HSV[:,:,1],Enhanced]))
+PlotImage(Enhanced)
+
+# Canny edge detection
+Gray = color.rgb2gray(Enhanced)
+Otsu = filters.threshold_otsu(Gray)
+Edges = canny(Gray, sigma=1, high_threshold=Otsu, low_threshold=0)
+LargeEdges = morphology.binary_dilation(Edges,morphology.disk(2))
+PlotImage(LargeEdges)
+
+# PCNN edges
+PCNN_Edges = SPCNN_Edges(Gray,Beta=3,Delta=1/2,VT=100)
+# PlotImage(PCNN_Edges)
+# Edges = np.zeros(PCNN_Edges.shape)
+# Edges[PCNN_Edges == np.unique(PCNN_Edges)[0]] = 1
+# PlotImage(Edges)
+
+# Compute distances in individual RGB dimensions
+Distances, Map = ComputeDistances(Filtered)
+PlotImage(np.linalg.norm(Distances,axis=3).max(axis=2))
+
+# Compute neurons firing time to assess rank order
+Times = FiringTimes(Distances)
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(np.unique(Times))
 plt.show()
-plt.close(Figure)
-
-Tic = time.time()
-print('\nImage segmentation...')
-
-# Mark seeded neurons
-D_Threshold = 2
-I = Input_Array.copy()
-I_Padded = np.pad(I,2,mode='reflect')
-I_Padded = I_Padded[:,:,2:5]
-Distances = np.zeros((I.shape[0],I.shape[1],9))
-for Row in range(I.shape[0]):
-    for Column in range(I.shape[1]):
-
-        Vector = I[Row,Column]
-        k = 0
-        for i in range(-1,2):
-            for j in range(-1,2):
-                Pi = Row + i + 2
-                Pj = Column + j + 2
-                Distances[Row,Column,k] = ManhattanDistance(Vector,I_Padded[Pi,Pj])
-                k += 1
-D = Distances.max(axis=2)
-Seeded = (D < D_Threshold) * 1
-PlotArray(Seeded, 'Seeded')
-
-W = np.ones((3,3))
-L = correlate(Seeded,W,mode='reflect',output='int')
-L[L > 0] = 1
-Labels = measure.label(L)
-Labels_Padded = np.pad(Labels,pad_width=2,mode='constant',constant_values=0)
-L[Seeded == 1] = 0
-PlotArray(L, 'Linked')
-
-
-# Find unlinked neighbours
-U = correlate(L,W,mode='reflect',output='int')
-U[U > 0] = 1
-U[(Seeded == 1) | (L == 1)] = 0
-PlotArray(U,'U')
-
-Sigmas = np.zeros((len(np.unique(Labels)),3)).astype('int')
-FiredNeurons = 0
-Threshold_delta = 1
-while np.sum(L) > FiredNeurons:
-
-    FiredNeurons = np.sum(L)
 
-    for i in range(1,len(np.unique(Labels))):
-        Label = np.unique(Labels)[i]
-
-        # Compute mean vector value
-        Sigmas[i] = np.round(I[Labels == Label].mean(axis=0)).astype('int')
-        I[Labels == Label] = Sigmas[i]
-        I_Padded = np.pad(I, 2, mode='reflect')
-        I_Padded = I_Padded[:, :, 2:5]
-
-        # Find unlinked neighbours
-        U = correlate((Labels == Label)*1,W,mode='reflect',output='int')
-        U[U > 0] = 1
-        U[(Seeded == 1) | (L == 1)] = 0
-
-        # Go through every unlinked pixel
-        Rows, Columns = np.where(U == 1)
-        for PixelNumber in range(len(Rows)):
-            I_Row, I_Column = Rows[PixelNumber], Columns[PixelNumber]
-            Pixel = I[I_Row,I_Column]
-
-            # Extract labels of all pixel neighbours
-            Neighbours_L = Labels_Padded[2+I_Row-1:2+I_Row+2,2+I_Column-1:2+I_Column+2]
-
-            # Filter neighbours to keep only linked neighbours
-            NL_Rows, NL_Columns = np.where(Neighbours_L > 0)
-            LinkedNeighbours_R = NL_Rows + I_Row - 1
-            LinkedNeighbours_C = NL_Columns + I_Column - 1
-            LinkedNeighbours = I[LinkedNeighbours_R, LinkedNeighbours_C]
-
-            Pixel_Distances = np.zeros(len(LinkedNeighbours))
-            N_Labels = np.zeros(len(LinkedNeighbours))
-            for j in range(len(Pixel_Distances)):
-                N_Labels[j] = Neighbours_L[NL_Rows[j],NL_Columns[j]]
-                Pixel_Distances[j] = ManhattanDistance(Pixel,LinkedNeighbours[j])
-
-            MinDistanceIndex = np.argsort(Pixel_Distances)[0]
-            if Pixel_Distances[MinDistanceIndex] < D_Threshold:
-                Labels[I_Row,I_Column] = N_Labels[MinDistanceIndex]
-                Labels_Padded[I_Row+2,I_Column+2] = N_Labels[MinDistanceIndex]
-                L[I_Row,I_Column] = 1
-
-    D_Threshold += Threshold_delta
-PlotArray(Labels,'Linked')
-
-
-# Initialize parameters
-S = NormalizeValues(NormArray)
-Y = np.zeros(S.shape)
-Labels = np.zeros(S.shape)
-T = np.zeros(S.shape)
-W = np.array([[0.5, 1, 0.5],
-              [1, 0, 1],
-              [0.5, 1, 0.5]])
-Theta = np.ones(S.shape)
-
-FiredNumber = 0
-N = 0
-
-Delta = 1/255
-VT = 10
-Beta = 2
-
-# Perform segmentation
-while FiredNumber < S.size:
-
-    N += 1
-    F = S
-    L = correlate(Y, W, output='float', mode='reflect')
-    Theta = Theta - Delta + VT * Y
-    U = F * (1 + Beta * L)
-
-    Y = (U > Theta) * 1
-
-    T = T + N * Y
-    FiredNumber = FiredNumber + sum(sum(Y))
-
-Output = 1 - NormalizeValues(T)
-
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Output, cmap='gray')
-plt.axis('off')
-plt.title('Output')
-plt.tight_layout()
-plt.show()
-plt.close(Figure)
-
-
-# Print time elapsed
-Toc = time.time()
-PrintTime(Tic, Toc)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################################## Tests
-
-# Norm array
-R, G, B = Input_Array[:,:,0], Input_Array[:,:,1], Input_Array[:,:,2]
-NormArray = np.sqrt(R**2 + G**2 + B**2)
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(NormArray, cmap='gray')
-plt.axis('off')
-plt.title('Norm values')
-plt.tight_layout()
-plt.show()
-plt.close(Figure)
-
-# Distance array
-Input_Array_Padded = np.pad(Input_Array,2,mode='reflect')
-Input_Array_Padded = Input_Array_Padded[:,:,2:5]
-
-Distances = np.zeros((NormArray.shape[0],NormArray.shape[1],9))
-for Row in range(Input_Array.shape[0]):
-    for Column in range(Input_Array.shape[1]):
-
-        Vector = Input_Array[Row,Column]
-        k = 0
-        for i in range(-1,2):
-            for j in range(-1,2):
-                Pi = Row + i + 2
-                Pj = Column + j + 2
-                Distances[Row,Column,k] = EuclidianDistance(Vector,Input_Array_Padded[Pi,Pj])
-                k += 1
-D = NormalizeValues(Distances.mean(axis=2))
-
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(D, cmap='gray')
-plt.axis('off')
-plt.title('Distances values')
-plt.tight_layout()
-plt.show()
-plt.close(Figure)
-
-
-
-# Initialize parameters
-S = NormalizeValues(NormArray)
-Y = np.zeros(S.shape)
-Labels = np.zeros(S.shape)
-T = np.zeros(S.shape)
-W = np.array([[0.5, 1, 0.5],
-              [1, 0, 1],
-              [0.5, 1, 0.5]])
-Theta = np.ones(S.shape)
-
-FiredNumber = 0
-N = 0
-
-Delta = 1/255
-VT = 10
-Beta = 2
-
-FL_Threshold = 10
-RG_Threshold = 10
-
-Labels_Number = 1
-# Perform segmentation
-while FiredNumber < S.size:
-
-    N += 1
-    F = S
-    L = correlate(Y, W, output='float', mode='reflect')
-    Theta = Theta - Delta + VT * Y
-    U = F * (1 + Beta * L)
-
-    OldFired = sum(sum(Y))
-    Y = (U > Theta) * 1
-    NewFired = sum(sum(Y))
-
-    Rows, Columns = np.where(Y == 1)
-    Pixels_list = list(Input_Array[Rows,Columns])
-    Pixels_Labels = Labels[Rows,Columns]
-
-    for Pixel in Pixels_list.pop(0):
-
-        if OldFired == 0 and NewFired > OldFired:
-            Label = Labels_Number
-
-        Pixels_Distances = np.zeros(len(Pixels_Labels))
-        for j in range(len(Pixels_Labels)):
-            Pixels_Distances[j] = EuclidianDistance(Pixel,Pixels_list[j])
-
-        Pixels2Label = Pixels_Labels[Pixels_Distances < RG_Threshold]
-        Pixels2Label[Pixels2Label == 0] = Label
-
-        ### Continue to do labelling correctly
-
-    # Fast linking
-    while OldFired != NewFired:
-
-        OldFired = sum(sum(Y))
-
-        # Find fired neurons and distances with their neighbours
-        Rows, Columns = np.where(Y == 1)
-        Neighbours = Distances[Rows, Columns]
-
-        # Keep neurons with small enough spectral distance
-        FastLinked = (Neighbours < FL_Threshold) * 1
-
-        # Compute indices of these neurons with small spectral distances
-        Neighbours = np.array([-1,0,1])
-        RowsNeighbours = np.tile(np.tile(Neighbours,3),len(Rows))
-        ColumnsNeighbours = np.tile(np.repeat(Neighbours,3),len(Columns))
-        RowsN = np.reshape(np.repeat(Rows,9) + RowsNeighbours,(len(Rows),9))
-        ColumnsN = np.reshape(np.repeat(Columns,9) + ColumnsNeighbours,(len(Columns),9))
-
-        # Fire neurons with small spectral distance from fired neuron
-        RowsLinked = RowsN[FastLinked == 1]
-        ColumnsLinked = ColumnsN[FastLinked == 1]
-
-        # Remove index out of bounds
-        RowsBool = ((RowsLinked >= 0) & (RowsLinked < S.shape[0]))
-        ColumnsBool = ((ColumnsLinked >= 0) & (ColumnsLinked < S.shape[1]))
-        BoolIndices = RowsBool & ColumnsBool
-        Y[RowsLinked[BoolIndices],ColumnsLinked[BoolIndices]] = 1
-        NewFired = sum(sum(Y))
-
-    T = T + N * Y
-    FiredNumber = FiredNumber + sum(sum(Y))
-
-Output = 1 - NormalizeValues(T)
-
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.imshow(Output, cmap='gray')
-plt.axis('off')
-plt.title('Output')
-plt.tight_layout()
-plt.show()
-plt.close(Figure)
-
-
-# Print time elapsed
-Toc = time.time()
-PrintTime(Tic, Toc)
+# Define seeded pixels and neurons using Manhattan distance
+RGBThreshold = Filtered.max() / 52
+Manhattan = Distances.sum(axis=3)
+
+Seeded = np.max(Manhattan,axis=2) < RGBThreshold
+PlotImage(Seeded)
+
+# Perform fast linking
+Linked = FastLinking(Seeded, Map)
+
+# Remove edge pixels
+Linked = Linked - Edges*1
+Linked[Linked < 0] = 0
+PlotImage(Linked)
+
+# Label different groups and perform region growing
+Groups = measure.label(Linked,connectivity=2)
+Groups = RegionGrowing(Linked, Groups, Times, Edges)
+
+Means, Segmented = MeansGroupsValues(Groups, Array)
+PlotImage(Segmented)
+
+SegDistances = np.linalg.norm(ComputeDistances(Segmented)[0],axis=3)
+PlotImage(np.max(SegDistances,axis=2))
+
+
+# Perform region merging using RAG threholding
+Size = 100
+Props = ['label','area',]
+Regions = pd.DataFrame(measure.regionprops_table(Groups, properties=Props))
+Labels = Regions[Regions['area'] < Size]
+
+def _weight_mean_color(graph, src, dst, n):
+    """Callback to handle merging nodes by recomputing mean color.
+
+    The method expects that the mean color of `dst` is already computed.
+
+    Parameters
+    ----------
+    graph : RAG
+        The graph under consideration.
+    src, dst : int
+        The vertices in `graph` to be merged.
+    n : int
+        A neighbor of `src` or `dst` or both.
+
+    Returns
+    -------
+    data : dict
+        A dictionary with the `"weight"` attribute set as the absolute
+        difference of the mean color between node `dst` and `n`.
+    """
+
+    diff = graph.nodes[dst]['mean color'] - graph.nodes[n]['mean color']
+    diff = np.linalg.norm(diff)
+    return {'weight': diff}
+def merge_mean_color(graph, src, dst):
+    """Callback called before merging two nodes of a mean color distance graph.
+
+    This method computes the mean color of `dst`.
+
+    Parameters
+    ----------
+    graph : RAG
+        The graph under consideration.
+    src, dst : int
+        The vertices in `graph` to be merged.
+    """
+    graph.nodes[dst]['total color'] += graph.nodes[src]['total color']
+    graph.nodes[dst]['pixel count'] += graph.nodes[src]['pixel count']
+    graph.nodes[dst]['mean color'] = (graph.nodes[dst]['total color'] /
+                                      graph.nodes[dst]['pixel count'])
+RAG = graph.rag_mean_color(Filtered,Groups)
+Merged = graph.merge_hierarchical(Groups,RAG,15,True,False,merge_mean_color,_weight_mean_color)
+Means, MergedImage = MeansGroupsValues(Groups, Filtered)
+PlotImage(MergedImage)

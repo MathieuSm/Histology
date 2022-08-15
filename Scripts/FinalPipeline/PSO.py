@@ -82,6 +82,7 @@ def PlotEvolution(Xs, G_Bests, GBVs, Ranges):
         Axes2 = Axes.twinx()
         Axes2.plot(GBVs/GBVs.max(), color=(0,0,0), marker='o', markersize=5, linestyle='--', linewidth=1.5, label='Best Cost')
         Axes2.set_ylabel('Relative cost')
+        Axes2.set_ylim([0, 1])
 
         for j in range(Xs.shape[-2]):
             Color = plt.cm.winter((j+1) / Xs.shape[-2])

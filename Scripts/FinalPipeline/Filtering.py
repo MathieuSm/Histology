@@ -38,27 +38,10 @@ def FFT2D(Image,CutOff,Sharpness,PassType,Plot=False):
     Tic = time.time()
     print('Perform 2D FFT filtering')
 
-    if Plot:
-        Figure, Axes = plt.subplots(1, 1)
-        Axes.imshow(Image, cmap='gray')
-        plt.title('Original Image')
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
-        plt.close(Figure)
-
     # Filter by FFT
+
     FFT = np.fft.fft2(Image)
     Center = np.fft.fftshift(FFT)
-
-    if Plot:
-        Figure, Axes = plt.subplots(1, 1)
-        Axes.imshow(np.log(1+np.abs(FFT)), cmap='gray')
-        plt.title('Signal FFT')
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
-        plt.close(Figure)
 
     # Build filter using sigmoid function
     Half = np.array(FFT.shape) / 2
@@ -70,7 +53,29 @@ def FFT2D(Image,CutOff,Sharpness,PassType,Plot=False):
     elif PassType == 'High':
         Filter = 1 / (1 + np.exp(-Sharpness * (Norm - CutOff)))
 
+    # Apply filter
+    LowPassCenter = Center * Filter
+    LowPass = np.fft.ifftshift(LowPassCenter)
+    Filtered = np.abs(np.fft.ifft2(LowPass))
+
     if Plot:
+
+        Figure, Axes = plt.subplots(1, 1)
+        Axes.imshow(Image, cmap='gray')
+        plt.title('Original Image')
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+        plt.close(Figure)
+
+        Figure, Axes = plt.subplots(1, 1)
+        Axes.imshow(np.log(1+np.abs(FFT)), cmap='gray')
+        plt.title('Signal FFT')
+        plt.axis('off')
+        plt.tight_layout()
+        plt.show()
+        plt.close(Figure)
+
         Figure, Axes = plt.subplots(1, 1)
         Axes.imshow(Filter, cmap='gray')
         plt.title('Filter')
@@ -79,12 +84,6 @@ def FFT2D(Image,CutOff,Sharpness,PassType,Plot=False):
         plt.show()
         plt.close(Figure)
 
-    # Apply filter
-    LowPassCenter = Center * Filter
-    LowPass = np.fft.ifftshift(LowPassCenter)
-    Filtered = 1 - np.abs(np.fft.ifft2(LowPass))
-
-    if Plot:
         Figure, Axes = plt.subplots(1, 1)
         Axes.imshow(Filtered, cmap='gray')
         plt.title('Filtered Image')

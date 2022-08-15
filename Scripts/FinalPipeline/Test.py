@@ -1,7 +1,36 @@
+#!/usr/bin/env python3
+
+import sys
 import time
 import numpy as np
-from skimage import io, filters, measure
+from pathlib import Path
 import matplotlib.pyplot as plt
+from skimage import io, morphology, color, filters
+
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+
+import PSO
+import Filtering
+
+plt.rc('font', size=12)
+
+
+class ParameterClass:
+
+    def __init__(self, Gray, Seg):
+        self.Gray = Gray
+        self.Seg = Seg
+        self.Cost = 1
+
+class PSOArgs:
+
+    def __init__(self, Function2Optimize, Ranges, Population, Cs, MaxIt=10, STC=1E-3):
+        self.Function = Function2Optimize
+        self.Ranges = Ranges
+        self.Population = Population
+        self.Cs = Cs
+        self.MaxIt = MaxIt
+        self.STC = STC
 
 def PlotImage(Array):
 
@@ -29,22 +58,75 @@ def PrintTime(Tic, Toc):
 
     print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
 
-def GetNeighbours(Array2D):
+def ExtractSkeleton(Image, Plot=False):
+    """
+    Extract skeleton of manually segmented image
+    :param Image: Numpy image dim r x c x 3
+    :param Plot: 'Full' or 'Sub' to plot intermediate results
+    :param SubArea: Indices to plot smaller image of intermediate results
+    :return: Skeleton of the segmentation
+    """
+
+    Tic = time.time()
+    print('\nExtract manual segmentation skeleton ...')
+
+    Filter1 = Image[:, :, 0] > 100
+    Filter2 = Image[:, :, 1] < 90
+    Filter3 = Image[:, :, 2] < 150
+
+    Bin = np.zeros(Filter1.shape)
+    Bin[Filter1 & Filter2 & Filter3] = 1
+
+    # Dilate to link extracted segmentation
+    Disk = morphology.disk(5)
+    BinDilate = morphology.binary_dilation(Bin, Disk)
+
+    # Skeletonize to obtain 1 pixel thickness
+    Skeleton = morphology.skeletonize(BinDilate)
+
+    if Plot:
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Skeleton, cmap='binary')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Skeleton
+
+def GetNeighbours(Array2D, N=1):
     """
     Function used to get values of the neighbourhood pixels (based on numpy.roll)
     :param Array2D: Row x Column numpy array
+    :param N: Number of neighbours offset (1 or 2 usually)
     :return: Neighbourhood pixels values
     """
 
     # Define a map for the neighbour index computation
     Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
 
-    YSize, XSize = Array2D.shape[:-1]
-    Dimension = Array2D.shape[-1]
+    # number of neighbours
+    Neighbours = (2*N+1)**2 - 1
+
+    if len(Array2D.shape) > 2:
+        YSize, XSize = Array2D.shape[:-1]
+        Dimension = Array2D.shape[-1]
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours, Dimension))
+    else:
+        YSize, XSize = Array2D.shape
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours))
 
     print('\nGet neighbours ...')
     Tic = time.time()
-    Neighbourhood = np.zeros((YSize, XSize, 8, Dimension))
     i = 0
     for Shift in [-1, 1]:
         for Axis in [0, 1]:
@@ -55,98 +137,55 @@ def GetNeighbours(Array2D):
         for Axis in [(0, 1)]:
             Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
             i += 1
+
+    if N == 2:
+        for Shift in [-2, 2]:
+            for Axis in [0, 1]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                i += 1
+
+        for Shift in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                i += 1
+
+        for Shift in [(-2, -1), (2, -1), (-2, 1), (2, 1)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                i += 1
+
+        for Shift in [(-1, -2), (1, -2), (-1, 2), (1, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                i += 1
+
+
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     return Neighbourhood, Map
 
-def ComputeDistances(Array2D):
+def ComputeGradients(Array2D, N=1):
     """
     Function used to get max spectral distance between pixel and its neighbourhood
     :param Array2D: Row x Column numpy array
     :return: Maximum distance
     """
 
-    Neighbours, Map = GetNeighbours(Array2D)
+    Neighbours, Map = GetNeighbours(Array2D, N)
 
-    print('\nCompute distances ...')
+    print('\nCompute gradients ...')
     Tic = time.time()
 
-    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8, 3))
-    for i in range(8):
-        Distances[:, :, i] = np.abs(Array2D - Neighbours[:, :, i])
+    Distances = np.zeros((Neighbours.shape[:-1]))
+    Dimension = (2*N+1)**2 - 1
+    for i in range(Dimension):
+        Distances[:, :, i] = np.linalg.norm(Array2D - Neighbours[:, :, i], axis=2)
 
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     return Distances, Map
-
-def PSP_j(t, Distances):
-
-    PSP = np.zeros(Distances.shape)
-    PSP[t >= Distances] = t - Distances[t >= Distances]
-    return PSP.sum(axis=1)
-
-def FiringTimes(Distances,Threshold=1):
-
-    """
-    Function used to compute firing times of individual neighbour neurons
-    :param Distances: MxNxO-dimensional numpy array containing inter-pixel distances
-    :param Threshold: Constant threshold reached by all synapses
-    :return: Times: Individual neighbour neurons firing times
-    """
-
-    # Record elapsed time
-    Tic = time.time()
-    print('\nCompute firing times ...')
-
-    # Compute time necessary for all synapses to fire
-    Ni = Distances.shape[-1]
-    Times = Threshold/Ni + Distances.sum(axis=3)/Ni
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic,Toc)
-
-    return Times
-
-def FastLinking(Seeded, Map):
-
-    """
-    Perform fast linking of direct neighbours using np.where (faster than morphology.binary_dilation from skimage)
-    :param Seeded: 2D numpy array containing seeded pixels, background is labelled 0
-    :param Map: Mapping of the neighbours to link
-    :return: Linked: 2D numpy array with all linked pixels labelled as 1
-    """
-
-    # Record elapsed time
-    Tic = time.time()
-    print('\nPerform fast linking ...')
-
-    # Create linked array
-    Linked = np.zeros(Seeded.shape)
-
-    # Extract seeded pixel positions and find corresponding neighbours
-    Py, Px = np.where(Seeded)
-    Positions = np.repeat(np.vstack([Py,Px]).T,len(Map),axis=0)
-    Links = Positions + np.tile(Map.T, len(Py)).T
-
-    # Set out-of-border neighbours to array start index
-    Links[:,0][Links[:,0] == Seeded.shape[0]] = 0
-    Links[:,1][Links[:,1] == Seeded.shape[1]] = 0
-
-    # Label linked pixels
-    Linked[Links[:,0], Links[:,1]] = 1
-
-    # Reshape coordinate vectors
-    Positions = np.reshape(Positions,(len(Py),8,2))
-    Links = np.reshape(Links,(len(Py),8,2))
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
-
-    return Positions, Links, Linked
 
 def NormalizeValues(Image):
     """
@@ -159,147 +198,151 @@ def NormalizeValues(Image):
 
     return N_Image
 
-def Histogram(Array,NBins=256,Plot=False):
+def SPCNN_Edges(Image, Beta=2, VT=100, GT=0.3, C=0.01):
 
     """
-    Compute image histogram
+    Image edge detection using simplified PCNN and single neuron firing
     Based on:
-    Zhan, K., Shi, J., Wang, H. et al.
-    Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
-    Arch Computat Methods Eng 24, 573–588 (2017).
-    https://doi.org/10.1007/s11831-016-9182-3
+    Shi, Z., Hu, J. (2010)
+    Image edge detection method based on A simplified PCNN model with anisotropic linking mechanism
+    Proceedings of the 2010 10th International Conference on Intelligent Systems Design and Applications, ISDA’10, 330–335
+    https://doi.org/10.1109/ISDA.2010.5687242
 
-    :param: NBins: Number of histogram bins
-    :return: H: Image histogram in numpy array
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param VT: Dynamic threshold amplitude
+    :param GT: Gradient threshold ratio with respect to maximum gradient
+    :param C: Small constant ensuring all neurons firing at first iteration
+    :return: 1 - normalized time matrix
     """
 
     Tic = time.time()
-    print('\nCompute image histogram...')
+    print('\nPCNN edges detection ...')
 
-    # Initialize PCNN
-    MaxS = Array.max()
-    S = NormalizeValues(Array)
-    Theta = 1
-    Delta = 1 / (NBins - 1)
-    Vt = 1 + Delta
-    Y = np.zeros(S.shape)
-    U = S
-    H = np.zeros(NBins)
+    # Initialize parameters
+    Rows, Columns = Image.shape[:-1]
+    Y = np.zeros((Rows, Columns))
 
-    # Perform histogram analysis
-    for N in range(1,NBins+1):
-        Theta = Theta - Delta + Vt * Y
-        Y = np.where((U - Theta) > 0, 1, 0)
-        H[NBins - N] = Y.sum()
+    # Compute anisotropic weight matrix
+    Gradients3, Map = ComputeGradients(Image, N=1)
+
+    GradientThreshold = GT * np.max(Gradients3)
+    A = (Gradients3 > GradientThreshold) * 1
+
+    # # Deal with non-edge pixels
+    # Gradients5 = ComputeGradients(Image, N=2)[0]
+    # Sum33 = np.sum(Gradients3 > GradientThreshold, axis=2)
+    # Sum55 = np.sum(Gradients5 > GradientThreshold, axis=2)
+    # NonEdgePixels = Sum33 == Sum55
+    # A[NonEdgePixels] = np.ones(8)
+
+    # Perform analysis
+    for N in range(2):
+
+        N += 1
+        YNeighbours = GetNeighbours(Y)[0]
+        F = np.sum(YNeighbours * A, axis=2) + C
+        L = np.sum(YNeighbours * A, axis=2)
+        Theta = VT * Y
+
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
 
     # Print time elapsed
     Toc = time.time()
+    print('\nEdge detection done!')
     PrintTime(Tic, Toc)
 
-    Bins = np.arange(0,MaxS+Delta,Delta*MaxS)
+    return Y
 
-    if Plot:
-        Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
-        Axes.bar(x=Bins, height=H / H.sum(), width=Bins.max()/len(Bins), color=(1, 0, 0))
-        Axes.set_xlabel('Values (-)')
-        Axes.set_ylabel('Density (-)')
-        plt.subplots_adjust(left=0.175)
-        plt.show()
-        plt.close(Figure)
+def DiceCoefficient(Bin1, Bin2):
 
-    return H, Bins
+    return np.sum(Bin1 * Bin2) / np.sum(Bin1 + Bin2)
 
-Array = np.round(50 * np.random.randn(5,5,3) + 128).astype('uint8')
-Array[1:4,1:4] = [200,200,200]
-Array[0,4] = [200, 200, 200]
-Array = np.zeros((5,5))
-Array[2,2] = 1
+def Function2Optimize(Parameters=np.array([2., 100., 0.3])):
 
+    Beta, VT, GT = Parameters
+
+    Segmented = SPCNN_Edges(Params.Gray, Beta, VT, GT)
+    Cost = 1 - DiceCoefficient(Segmented, Params.Seg)
+
+    if Cost < Params.Cost:
+        Params.Cost = Cost
+
+    return Cost
+
+
+# Read images
 Array = io.imread('TestROI.png')
 PlotImage(Array)
 
-Filtered = filters.gaussian(Array,sigma=3,multichannel=True)
+Figure, Axis = plt.subplots(1,1)
+Axis.imshow(Array[470:520,350:400])
+plt.show()
+
+ROI = Array[470:520,350:400]
+F1 = ROI[:,:,0] == 74
+F2 = ROI[:,:,1] == 81
+F3 = ROI[:,:,2] == 159
+Y0, X0 = np.where(F1*F2*F3)
+
+# PCNN
+Gradients, Map = ComputeGradients(Array)
+
+Y = np.zeros(ROI.shape[:-1])
+Y[Y0,X0] = 1
+PlotImage(ROI)
+PlotImage(Y)
+
+Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
+Y[Y0 + Map[Min[0],0], X0 + Map[Min[0],1]] = 1
+PlotImage(Y)
+
+for i in range(10):
+    Y0, X0 = np.where(Y)
+    Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
+    Shifts = np.repeat(Map[:,0],len(Y0)).reshape((len(Map),len(Y0)))
+    Y[Y0 + Shifts * Min.T, X0 + Shifts * Min.T] = 1
+    PlotImage(Y)
+
+
+Seg = io.imread('TestROI_Seg.png')
+PlotImage(Seg)
+
+Skeleton = ExtractSkeleton(Seg) * 1
+Skeleton = morphology.binary_dilation(Skeleton, morphology.disk(5))
+PlotImage(Skeleton)
+
+Filtered = filters.gaussian(Array,sigma=1,multichannel=True)
 Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
 PlotImage(Filtered)
 
-# Compute distances in individual RGB dimensions
-Distances, Map = ComputeDistances(Filtered)
+Norm = np.linspace(-5,5)
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(Norm, 1 - 1 / (1 + np.exp(-1 * (Norm - 0))), color=(1,0,0))
+Axis.plot(Norm, 1 - 1 / (1 + np.exp(-2 * (Norm - 0))), color=(0,1,0))
+Axis.plot(Norm, 1 - 1 / (1 + np.exp(-1 * (Norm - 1))), color=(0,0,1))
+plt.show()
 
-# Compute neurons firing time to assess rank order
-Times = FiringTimes(Distances)
+# Transform to gray level
+Gray = color.rgb2gray(Array)
+PlotImage(Gray)
+Gradients, Map = ComputeGradients(Array)
+PlotImage(Gradients.max(axis=2) > 30)
 
-# Define seeded pixels and neurons using Manhattan distance
-Threshold = 1 / 52
-Manhattan = Distances.sum(axis=3)
-Seeded = np.max(Manhattan,axis=2) < Threshold
-PlotImage(Seeded)
+# Pass arguments to parameter class
+Params = ParameterClass(Filtered, Skeleton)
 
-# Perform fast linking method 1
-Positions, Links, Linked = FastLinking(Seeded, Map)
-PlotImage(Linked)
+# Run PSO for SPCNN parameters
+Ranges = np.array([[0,4],[1,200],[0.1,0.9]])
+Population = 20
+Cs = [0.15, 0.1]
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20)
+PSOResults = PSO.Main(Arguments, Evolution=True)
 
-# Compute mean group value
-Groups = measure.label(Linked,connectivity=2)
-Labels = np.unique(Groups)[1:]
-Means = np.zeros((len(Labels),3)).astype('uint8')
-Tic = time.time()
-Segmented = Filtered.copy()
-for Label in Labels:
-    Group = Filtered[Groups == Label]
-    Means[Label-1] = np.mean(Group, axis=0).round().astype('uint8')
-    Segmented[Groups == Label] = Means[Label-1]
-Toc = time.time()
-PrintTime(Tic,Toc)
-PlotImage(Segmented)
-
-# Unlinked neuron having a linked neighbour
-UnPositions, UnLinks, UnLinked = FastLinking(Linked, Map)
-UnLinked = UnLinked - Linked*1
-PlotImage(UnLinked)
-
-# Unlinked neurons values
-NeuronsValues = Times[UnLinked.astype('bool')]
-NeuronsDistances, Map = ComputeDistances(Segmented)
-NeuronsDistances[UnLinked.astype('bool')][0]
-
-# Extract linked groups
-LinkedGroups = Groups[UnLinks[0,:,0],UnLinks[0,:,1]]
-# Find labelled group with minimal difference
-ClosestGroup = np.argmin(NeuronsValues[0][LinkedGroups.astype('bool')])
-# Attribute label of the closest group to the linked neuron
-Groups[UnLinks[0,0,0],UnLinks[0,0,1]] = LinkedGroups[LinkedGroups.astype('bool')][ClosestGroup]
-
-
-
-
-# Extract latest output pulse timing
-SeededNeurons = np.repeat(Seeded,8).reshape((Times.shape))
-MaxTime = np.max(Times * SeededNeurons)
-Linked = np.sum(Times <= MaxTime,axis=2).astype('bool')
-PlotImage(Linked)
-
-
-
-Array[Py,Px]
-
-
-
-
-LP = np.array([Py,Px]).T+Map[Shifts]
-LP[LP == Links.shape[0]] = 0
-
-Py, Px = np.where(Seeded)
-Shifts = np.repeat(Links[Py,Px],2).reshape((8,2))
-LP = np.array([Py,Px]).T+Map*Shifts
-Linked = np.zeros(Seeded.shape).astype('bool')
-Linked[LP[:,0],LP[:,1]] = 1
-PlotImage(Linked)
-
-Merge = np.zeros(Seeded.shape)
-Merge[Seeded | Linked] = 1
-PlotImage(Merge)
-
-P = np.array([82,417])
-Positions = np.repeat(Links[P[0], P[1]],2).reshape((8,2)) * (P + Map)
-
-
+# PCNN edges
+Beta, VT, GT = PSOResults
+PCNN_Edges = SPCNN_Edges(Array, 10, 50, 0.1)
+PlotImage(PCNN_Edges)
+Edges = np.zeros(PCNN_Edges.shape)
+Edges[PCNN_Edges == Params.PCNN_Seg] = 1
+PlotImage(Edges)
