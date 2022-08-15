@@ -290,6 +290,7 @@ Gradients, Map = ComputeGradients(Array)
 
 Y = np.zeros(ROI.shape[:-1])
 Y[Y0,X0] = 1
+Y_Neighbours = Y.copy()
 PlotImage(ROI)
 PlotImage(Y)
 
@@ -297,11 +298,16 @@ Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
 Y[Y0 + Map[Min[0],0], X0 + Map[Min[0],1]] = 1
 PlotImage(Y)
 
+Y_Neighbours = Y - Y_Neighbours
+PlotImage(Y_Neighbours)
+
 for i in range(10):
-    Y0, X0 = np.where(Y)
+    Y0, X0 = np.where(Y_Neighbours)
     Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
     Shifts = np.repeat(Map[:,0],len(Y0)).reshape((len(Map),len(Y0)))
+    Y_Neighbours = Y.copy()
     Y[Y0 + Shifts * Min.T, X0 + Shifts * Min.T] = 1
+    Y_Neighbours = Y - Y_Neighbours
     PlotImage(Y)
 
 
