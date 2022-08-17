@@ -16,13 +16,13 @@ from skimage.feature import canny
 from scipy.ndimage import correlate
 from skimage import io, color,  filters, measure, morphology
 
-def PlotImage(Array):
+def PlotImage(Array, Cmap='binary_r'):
 
     Figure, Axis = plt.subplots(1,1,figsize=(10,10))
     if Array.shape[-1] == 3:
         Axis.imshow(Array)
     else:
-        Axis.imshow(Array, cmap='binary_r')
+        Axis.imshow(Array, cmap=Cmap)
     Axis.axis('off')
     plt.subplots_adjust(0,0,1,1)
     plt.show()
@@ -395,7 +395,7 @@ F1 = Test[:,:,0] < 120
 F2 = Test[:,:,1] < 120
 F3 = Test[:,:,2] < 180
 F4 = Test[:,:,2] > 160
-Edges = F1*F2*F3*F4
+Edges = 1-F1*F2*F3*F4
 PlotImage(Edges)
 
 Filtered = filters.gaussian(Array,sigma=2,multichannel=True)
@@ -427,7 +427,7 @@ def enhance_contrast(image_matrix, bins=256):
     image_eq = np.reshape(a=image_eq, newshape=image_matrix.shape)
 
     return image_eq
-HSV = color.rgb2hsv(Filtered)
+HSV = color.rgb2hsv(Array)
 I = np.round(HSV[:,:,2]/HSV[:,:,2].max()*255).astype('uint8')
 PlotImage(I)
 Enhanced = enhance_contrast(I)/255
@@ -435,23 +435,36 @@ PlotImage(Enhanced)
 Enhanced = color.hsv2rgb(np.dstack([HSV[:,:,0], HSV[:,:,1],Enhanced]))
 PlotImage(Enhanced)
 
+Filtered = filters.gaussian(Enhanced,sigma=2,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+PlotImage(Filtered)
+
+Filtered = Filtered * np.repeat(1-Edges,3).reshape(Filtered.shape)
+
+
 # Canny edge detection
-Gray = color.rgb2gray(Enhanced)
+Gray = color.rgb2gray(Array)
+PlotImage(Gray)
 Otsu = filters.threshold_otsu(Gray)
 Edges = canny(Gray, sigma=1, high_threshold=Otsu, low_threshold=0)
 LargeEdges = morphology.binary_dilation(Edges,morphology.disk(2))
-PlotImage(LargeEdges)
+PlotImage(Edges)
 
 # PCNN edges
-PCNN_Edges = SPCNN_Edges(Gray,Beta=3,Delta=1/2,VT=100)
-# PlotImage(PCNN_Edges)
-# Edges = np.zeros(PCNN_Edges.shape)
-# Edges[PCNN_Edges == np.unique(PCNN_Edges)[0]] = 1
-# PlotImage(Edges)
+PCNN_Edges = SPCNN_Edges(1-Gray,Beta=2,Delta=1/5,VT=100)
+PlotImage(PCNN_Edges,Cmap='viridis')
+Edges = np.zeros(PCNN_Edges.shape)
+Edges[PCNN_Edges == np.unique(PCNN_Edges)[0]] = 1
+PlotImage(Edges)
 
 # Compute distances in individual RGB dimensions
-Distances, Map = ComputeDistances(Filtered)
+Distances, Map = ComputeDistances(Array)
 PlotImage(np.linalg.norm(Distances,axis=3).max(axis=2))
+
+MinDistances = np.linalg.norm(Distances,axis=3).min(axis=2)
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(np.unique(MinDistances))
+plt.show()
 
 # Compute neurons firing time to assess rank order
 Times = FiringTimes(Distances)
@@ -463,7 +476,7 @@ plt.show()
 RGBThreshold = Filtered.max() / 52
 Manhattan = Distances.sum(axis=3)
 
-Seeded = np.max(Manhattan,axis=2) < RGBThreshold
+Seeded = np.max(Manhattan,axis=2) < Manhattan.max() / 52
 PlotImage(Seeded)
 
 # Perform fast linking
@@ -533,5 +546,5 @@ def merge_mean_color(graph, src, dst):
                                       graph.nodes[dst]['pixel count'])
 RAG = graph.rag_mean_color(Filtered,Groups)
 Merged = graph.merge_hierarchical(Groups,RAG,15,True,False,merge_mean_color,_weight_mean_color)
-Means, MergedImage = MeansGroupsValues(Groups, Filtered)
+Means, MergedImage = MeansGroupsValues(Merged, Filtered)
 PlotImage(MergedImage)

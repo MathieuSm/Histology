@@ -5,7 +5,8 @@ import time
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
-from skimage import io, morphology, color, filters
+from scipy.ndimage import correlate
+from skimage import io, morphology, color, filters, segmentation, measure
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 
@@ -187,6 +188,27 @@ def ComputeGradients(Array2D, N=1):
 
     return Distances, Map
 
+def ComputeDistances(Array2D):
+    """
+    Function used to get max spectral distance between pixel and its neighbourhood
+    :param Array2D: Row x Column numpy array
+    :return: Maximum distance
+    """
+
+    Neighbours, Map = GetNeighbours(Array2D)
+
+    print('\nCompute distances ...')
+    Tic = time.time()
+
+    Distances = np.zeros((Array2D.shape[0], Array2D.shape[1], 8, 3))
+    for i in range(8):
+        Distances[:, :, i] = np.abs(Array2D - Neighbours[:, :, i])
+
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Distances, Map
+
 def NormalizeValues(Image):
     """
     Normalize image values, used in PCNN for easier parameters handling
@@ -228,12 +250,12 @@ def SPCNN_Edges(Image, Beta=2, VT=100, GT=0.3, C=0.01):
     GradientThreshold = GT * np.max(Gradients3)
     A = (Gradients3 > GradientThreshold) * 1
 
-    # # Deal with non-edge pixels
-    # Gradients5 = ComputeGradients(Image, N=2)[0]
-    # Sum33 = np.sum(Gradients3 > GradientThreshold, axis=2)
-    # Sum55 = np.sum(Gradients5 > GradientThreshold, axis=2)
-    # NonEdgePixels = Sum33 == Sum55
-    # A[NonEdgePixels] = np.ones(8)
+    # Deal with non-edge pixels
+    Gradients5 = ComputeGradients(Image, N=2)[0]
+    Sum33 = np.sum(Gradients3 > GradientThreshold, axis=2)
+    Sum55 = np.sum(Gradients5 > GradientThreshold, axis=2)
+    NonEdgePixels = Sum33 == Sum55
+    A[NonEdgePixels] = np.ones(8)
 
     # Perform analysis
     for N in range(2):
@@ -253,6 +275,138 @@ def SPCNN_Edges(Image, Beta=2, VT=100, GT=0.3, C=0.01):
     PrintTime(Tic, Toc)
 
     return Y
+
+def SPCNN_Edges(Image,Beta=2,Delta=1/255,VT=100):
+
+    """
+    Image edge detection using simplified PCNN and single neuron firing
+    Based on:
+    Shi, Z., Hu, J. (2010)
+    Image edge detection method based on A simplified PCNN model with anisotropic linking mechanism
+    Proceedings of the 2010 10th International Conference on Intelligent Systems Design and Applications, ISDA’10, 330–335
+    https://doi.org/10.1109/ISDA.2010.5687242
+
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param Delta: Linear decay factor for threshold level
+    :param VT: Dynamic threshold amplitude
+    :return: H: Image histogram in numpy array
+    """
+
+    Tic = time.time()
+    print('\nPCNN edges detection ...')
+
+    # Initialize parameters
+    S = NormalizeValues(Image)
+    Rows, Columns = S.shape
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
+    W = np.array([[0.5, 1, 0.5],
+                  [1, 0, 1],
+                  [0.5, 1, 0.5]])
+    Theta = np.ones((Rows, Columns))
+
+    FiredNumber = 0
+    N = 0
+
+    # Perform analysis
+    while FiredNumber < S.size:
+
+        N += 1
+        F = S
+        L = correlate(Y, W, output='float', mode='reflect')
+        Theta = Theta - Delta + VT * Y
+
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+
+        FiredNumber = FiredNumber + sum(sum(Y))
+
+        MedianFilter = np.array([[1,1,1],[1,1,1],[1,1,1]]) / 9
+        Y = correlate(Y,MedianFilter,output='int',mode='reflect')
+
+        T = T + N * Y
+
+
+    Output = 1 - NormalizeValues(T)
+
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Output
+
+def BetweenClassVariance(GrayScale, Segmented):
+
+    Ignited_Neurons = Segmented == 1
+
+    N0 = np.sum(~Ignited_Neurons)
+    N1 = np.sum(Ignited_Neurons)
+
+    if N0 == 0 or N1 == 0:
+        Vb = 0
+
+    else:
+        w0 = N0 / Segmented.size
+        w1 = N1 / Segmented.size
+
+        u0 = GrayScale[~Ignited_Neurons].mean()
+        u1 = GrayScale[Ignited_Neurons].mean()
+
+        Vb = w0 * w1 * (u0 - u1) ** 2
+
+    return Vb
+
+def SPCNN(Image,Beta=2,Delta=1/255,VT=100):
+
+    """
+    Segment image using simplified PCNN, single neuron firing and fast linking implementation
+    Based on:
+    Zhan, K., Shi, J., Wang, H. et al.
+    Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+    Arch Computat Methods Eng 24, 573–588 (2017).
+    https://doi.org/10.1007/s11831-016-9182-3
+
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param Delta: Linear decay factor for threshold level
+    :param VT: Dynamic threshold amplitude
+    :param Nl_max: Max number of iteration for fast linking
+    :return: H: Image histogram in numpy array
+    """
+
+    Tic = time.time()
+    print('\nImage segmentation...')
+
+    # Initialize parameters
+    S = NormalizeValues(Image)
+    Rows, Columns = S.shape
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
+    W = np.ones((Rows, Columns, 8)) * np.array([1,1,1,1,0.5,0.5,0.5,0.5])
+    Theta = np.ones((Rows, Columns))
+
+    FiredNumber = 0
+    N = 0
+
+    # Perform segmentation
+    while FiredNumber < S.size:
+
+        N += 1
+        F = S
+        L = np.sum(GetNeighbours(Y)[0] * W, axis=2)
+        Theta = Theta - Delta + VT * Y
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+
+        T = T + N * Y
+        FiredNumber = FiredNumber + sum(sum(Y))
+
+    Output = 1 - NormalizeValues(T)
+
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Output
 
 def DiceCoefficient(Bin1, Bin2):
 
@@ -275,39 +429,67 @@ def Function2Optimize(Parameters=np.array([2., 100., 0.3])):
 Array = io.imread('TestROI.png')
 PlotImage(Array)
 
-Figure, Axis = plt.subplots(1,1)
-Axis.imshow(Array[470:520,350:400])
-plt.show()
+# Figure, Axis = plt.subplots(1,1)
+# Axis.imshow(Array[470:520,350:400])
+# plt.show()
 
-ROI = Array[470:520,350:400]
-F1 = ROI[:,:,0] == 74
-F2 = ROI[:,:,1] == 81
-F3 = ROI[:,:,2] == 159
-Y0, X0 = np.where(F1*F2*F3)
+# Filter image
+Filtered = filters.gaussian(Array,sigma=5,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+PlotImage(Filtered)
 
-# PCNN
+# Find harvesian canals
+Gray = color.rgb2gray(Filtered)
+PlotImage(Gray)
+Segmented = SPCNN(Gray,Beta=2,Delta=1/5,VT=100)
+Harvesian = Segmented == np.unique(Segmented)[-1]
+PlotImage(Harvesian)
+
+# Distances
+Axis, Distances = morphology.medial_axis(1-Harvesian, return_distance=True)
+PlotImage(Distances)
+
+# Define Edges
+Test = Array.copy()
+F1 = Test[:,:,0] < 120
+F2 = Test[:,:,1] < 120
+F3 = Test[:,:,2] < 180
+F4 = Test[:,:,2] > 160
+Edges = 1-F1*F2*F3*F4
+PlotImage(Edges)
+
+# Watershed with mask
+Markers = measure.label(Harvesian)
+Segmented = segmentation.watershed(Distances,markers=Markers)
+PlotImage(Segmented)
+
+
+
+
 Gradients, Map = ComputeGradients(Array)
+PlotImage(Gradients.max(axis=2))
+Thresholds = np.unique(Gradients.max(axis=2))
+j = 0
+Threshold = Thresholds[j]
 
-Y = np.zeros(ROI.shape[:-1])
-Y[Y0,X0] = 1
-Y_Neighbours = Y.copy()
-PlotImage(ROI)
-PlotImage(Y)
-
-Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
-Y[Y0 + Map[Min[0],0], X0 + Map[Min[0],1]] = 1
-PlotImage(Y)
-
-Y_Neighbours = Y - Y_Neighbours
-PlotImage(Y_Neighbours)
+F = Gradients.max(axis=2) <= Thresholds.max()/25
+Y = F * 1
 
 for i in range(10):
-    Y0, X0 = np.where(Y_Neighbours)
-    Min = Gradients[Y0,X0] == Gradients[Y0,X0].min()
-    Shifts = np.repeat(Map[:,0],len(Y0)).reshape((len(Map),len(Y0)))
-    Y_Neighbours = Y.copy()
-    Y[Y0 + Shifts * Min.T, X0 + Shifts * Min.T] = 1
-    Y_Neighbours = Y - Y_Neighbours
+    Y0, X0 = np.where(Y)
+    XShifts = np.repeat(Map[:,1],len(Y0)).reshape((len(Map),len(Y0)))
+    YShifts = np.repeat(Map[:,0],len(Y0)).reshape((len(Map),len(Y0)))
+    Y_Copy = Y.copy()
+    Fire = Gradients[Y0,X0] <= Threshold
+    Y[Y0 - YShifts * Fire.T, X0 - XShifts * Fire.T] = 1
+    while np.alltrue(Y == Y_Copy):
+        j += 1
+        Threshold = Thresholds[j]
+
+        Fire = Gradients[Y0, X0] <= Threshold
+        XShifts = np.repeat(Map[:,1], len(Y0)).reshape((len(Map), len(Y0)))
+        YShifts = np.repeat(Map[:,0], len(Y0)).reshape((len(Map), len(Y0)))
+        Y[Y0 - YShifts * Fire.T, X0 - XShifts * Fire.T] = 1
     PlotImage(Y)
 
 
@@ -347,7 +529,7 @@ PSOResults = PSO.Main(Arguments, Evolution=True)
 
 # PCNN edges
 Beta, VT, GT = PSOResults
-PCNN_Edges = SPCNN_Edges(Array, 10, 50, 0.1)
+PCNN_Edges = 1-SPCNN_Edges(Enhanced, 5, 100, 0.3)
 PlotImage(PCNN_Edges)
 Edges = np.zeros(PCNN_Edges.shape)
 Edges[PCNN_Edges == Params.PCNN_Seg] = 1
