@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
+from scipy.signal import find_peaks
 from skimage import io, morphology, color, filters, segmentation, measure
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
@@ -104,7 +105,7 @@ def ExtractSkeleton(Image, Plot=False):
 
     return Skeleton
 
-def GetNeighbours(Array2D, N=1):
+def GetNeighbours(Array2D, N=1, Print=False):
     """
     Function used to get values of the neighbourhood pixels (based on numpy.roll)
     :param Array2D: Row x Column numpy array
@@ -122,47 +123,62 @@ def GetNeighbours(Array2D, N=1):
         YSize, XSize = Array2D.shape[:-1]
         Dimension = Array2D.shape[-1]
         Neighbourhood = np.zeros((YSize, XSize, Neighbours, Dimension))
+
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
     else:
         YSize, XSize = Array2D.shape
         Neighbourhood = np.zeros((YSize, XSize, Neighbours))
 
-    print('\nGet neighbours ...')
-    Tic = time.time()
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, 1, 'symmetric')
+
+    if Print:
+        print('\nGet neighbours ...')
+        Tic = time.time()
+
     i = 0
     for Shift in [-1, 1]:
         for Axis in [0, 1]:
-            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
             i += 1
 
     for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for Axis in [(0, 1)]:
-            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
             i += 1
 
     if N == 2:
+
+        # Pad again the array to avoid border effects
+        if len(Array2D.shape) > 2:
+            Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
+        else:
+            Array2D = np.pad(Array2D, 1, 'symmetric')
+
         for Shift in [-2, 2]:
             for Axis in [0, 1]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
                 i += 1
 
         for Shift in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
             for Axis in [(0, 1)]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
                 i += 1
 
         for Shift in [(-2, -1), (2, -1), (-2, 1), (2, 1)]:
             for Axis in [(0, 1)]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
                 i += 1
 
         for Shift in [(-1, -2), (1, -2), (-1, 2), (1, 2)]:
             for Axis in [(0, 1)]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
                 i += 1
 
-
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+    if Print:
+        Toc = time.time()
+        PrintTime(Tic, Toc)
 
     return Neighbourhood, Map
 
@@ -408,6 +424,38 @@ def SPCNN(Image,Beta=2,Delta=1/255,VT=100):
 
     return Output
 
+def SegmentsColors(Image, Segmented):
+
+    ColorSegments = np.zeros(Image.shape, 'uint8')
+
+    for Value in np.unique(Segmented):
+        Filter = Segmented == Value
+        R = Image[:, :, 0][Filter]
+        G = Image[:, :, 1][Filter]
+        B = Image[:, :, 2][Filter]
+        MeanColor = np.mean([R, G, B], axis=1)
+        Filter3 = np.repeat(Filter, 3).reshape(Image.shape)
+        ColorSegments += Filter3 * np.round(MeanColor).astype('uint8')
+
+    return ColorSegments
+
+def FuseSegments(Segmented, Seg2Fuse):
+    Fused = np.zeros(Segmented.shape)
+    Segments = np.unique(Segmented)
+    for j in Seg2Fuse:
+
+        if len(j) == 2:
+            Start, Stop = j
+
+            for i in range(Start, Stop + 1):
+                Filter = Segmented == Segments[i]
+                Fused[Filter] += Start
+        else:
+            Filter = Segmented == Segments[j]
+            Fused[Filter] += j
+
+    return Fused
+
 def DiceCoefficient(Bin1, Bin2):
 
     return np.sum(Bin1 * Bin2) / np.sum(Bin1 + Bin2)
@@ -463,10 +511,115 @@ Markers = measure.label(Harvesian)
 Segmented = segmentation.watershed(Distances,markers=Markers)
 PlotImage(Segmented)
 
+Filtered = filters.gaussian(Array,sigma=5,multichannel=True)
+Filtered = np.round(Filtered / Filtered.max() * 255).astype('int')
+PlotImage(Filtered)
+
+Gradients, Map = ComputeGradients(Filtered)
+MaxGrad = Gradients.max()
+Bin = np.sum(Gradients > 0.1 * MaxGrad,axis=2)
+Borders = Bin > 2
+NoNoise = Bin < 8
+PlotImage(1 - Borders * NoNoise)
+
+
+def enhance_contrast(image_matrix, bins=256):
+    image_flattened = image_matrix.flatten()
+    image_hist = np.zeros(bins)
+
+    # frequency count of each pixel
+    for pix in image_matrix:
+        image_hist[pix] += 1
+
+    # cummulative sum
+    cum_sum = np.cumsum(image_hist)
+    norm = (cum_sum - cum_sum.min()) * 255
+    # normalization of the pixel values
+    n_ = cum_sum.max() - cum_sum.min()
+    uniform_norm = norm / n_
+    uniform_norm = uniform_norm.astype('int')
+
+    # flat histogram
+    image_eq = uniform_norm[image_flattened]
+    # reshaping the flattened matrix to its original shape
+    image_eq = np.reshape(a=image_eq, newshape=image_matrix.shape)
+
+    return image_eq
+HSV = color.rgb2hsv(Filtered)
+I = np.round(HSV[:,:,2]/HSV[:,:,2].max()*255).astype('uint8')
+Enhanced = enhance_contrast(I)/255
+Enhanced = color.hsv2rgb(np.dstack([HSV[:,:,0], HSV[:,:,1],Enhanced]))
+Enhanced = np.round(NormalizeValues(Enhanced) * 255).astype('uint8')
+PlotImage(Enhanced)
+
+Gray = color.rgb2gray(Enhanced)
+PlotImage(Gray)
+Segmented = SPCNN(Gray,Beta=2,Delta=1/5,VT=1000)
+CSegmented = SegmentsColors(Enhanced,Segmented)
+PlotImage(CSegmented)
+
+# Segments selection
+Colors = np.unique(CSegmented.reshape(-1, CSegmented.shape[2]), axis=0)
+PlotImage((CSegmented == Colors[10])[:,:,0])
+
+# Compute segments color differences
+Differences = (Colors - np.roll(Colors,1,axis=0).astype('float'))[1:]
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(np.arange(len(Colors)-1)+0.5, Differences[:,0], color=(1,0,0))
+Axis.plot(np.arange(len(Colors)-1)+0.5, Differences[:,1], color=(0,1,0))
+Axis.plot(np.arange(len(Colors)-1)+0.5, Differences[:,2], color=(0,0,1))
+Axis.plot(np.arange(len(Colors)-1)+0.5,np.linalg.norm(Differences,axis=1), color=(0,0,0))
+for Segment, Color in enumerate(Colors):
+    Axis.plot([],marker='s',linestyle='none',color=Color/255, label=Segment)
+plt.xticks(range(len(Colors)))
+plt.legend(loc='best', ncol=2)
+plt.show()
+
+# Find segments to fuse
+def Segments2Fuse(Differences):
+    Padded = np.pad(Differences, 1)
+    Peaks = find_peaks(Padded)[0]
+
+    Start = 0
+    Segments = np.arange(len(Differences) + 1)
+    Seg2Fuse = []
+
+    for Peak in Peaks:
+        Stop = Segments[Segments < Peak][-1]
+        if Stop > Start:
+            Seg2Fuse.append([Start, Stop])
+        else:
+            Seg2Fuse.append([Start])
+        Start = Stop + 1
+
+    Stop = Segments[-1]
+    if Stop > Start:
+        Seg2Fuse.append([Start, Stop])
+    else:
+        Seg2Fuse.append([Start])
+
+    return Seg2Fuse
+
+Seg2Fuse = Segments2Fuse(np.linalg.norm(Differences,axis=1))
+
+# Fuse similar segments
+Seg2Fuse = [[0,3],[4,8],[9,15],[16,19]]
+Fused = FuseSegments(Segmented, Seg2Fuse)
+PlotImage(SegmentsColors(Enhanced,Fused))
+
+# Clean segment
+Disk = morphology.disk(2)
+Eroded = morphology.binary_erosion((CSegmented == Colors[1])[:,:,0], Disk)
+# PlotImage(Eroded)
+Dilated = morphology.binary_dilation(Eroded, Disk)
+PlotImage(Dilated)
+
+Clean = (CSegmented == Colors[1])[:,:,0] - Dilated*1
+Clean[Clean < 0] = 0
+PlotImage(Clean)
 
 
 
-Gradients, Map = ComputeGradients(Array)
 PlotImage(Gradients.max(axis=2))
 Thresholds = np.unique(Gradients.max(axis=2))
 j = 0

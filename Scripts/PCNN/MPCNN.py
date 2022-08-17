@@ -149,8 +149,12 @@ def FastLinking(Seeded, Map, NewLinksOnly=False):
     Links = Positions + np.tile(Map.T, len(Py)).T
 
     # Set out-of-border neighbours to array start index
-    Links[:,0][Links[:,0] == Seeded.shape[0]] = 0
-    Links[:,1][Links[:,1] == Seeded.shape[1]] = 0
+    Links[:,0][Links[:,0] == -1] = 0
+    Links[:,1][Links[:,1] == -1] = 0
+
+    # Set out-of-border neighbours to array end index
+    Links[:, 0][Links[:, 0] == Seeded.shape[0]] = Seeded.shape[0] - 1
+    Links[:, 1][Links[:, 1] == Seeded.shape[1]] = Seeded.shape[1] - 1
 
     # Label linked pixels
     Linked[Links[:,0], Links[:,1]] = 1
