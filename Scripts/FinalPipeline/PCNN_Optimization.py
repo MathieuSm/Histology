@@ -203,7 +203,7 @@ def RandCoords(Coords, ROINumber, TotalNROIs):
 
     return [RandX, RandY]
 
-def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
+def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False, ROIsPlot=False):
 
     Tic = time.time()
     print('\nBegin ' + str(NROIs) + ' ROIs extraction ...')
@@ -220,19 +220,23 @@ def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
         BoneROI = Bone[Y1:Y2, X1:X2]
         BVTV = BoneROI.sum() / BoneROI.size
 
-        while BVTV < Parameters.Threshold:
+        j = 0
+        while BVTV < Parameters.Threshold and j < 100:
             RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
             X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
             Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
             BoneROI = Bone[Y1:Y2, X1:X2]
             BVTV = BoneROI.sum() / BoneROI.size
+            j += 1
+            if j == 100:
+                print('No ROI found after 100 iterations')
 
         ROIs[i] += Parameters.Image[Y1:Y2, X1:X2]
         BoneROIs[i] += Bone[Y1:Y2, X1:X2]
         Xs[i] += [X1, X2]
         Ys[i] += [Y1, Y2]
 
-        if Plot:
+        if ROIsPlot:
             Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
             Axis.imshow(ROIs[i])
             Axis.axis('off')
@@ -257,7 +261,7 @@ def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False):
     Toc = time.time()
     PrintTime(Tic,Toc)
 
-    return ROIs, BoneROIs, Xs, Ys
+    return ROIs.astype('uint8'), BoneROIs, Xs, Ys
 
 def ExtractSkeleton(Image, Plot=False):
     """
@@ -315,33 +319,82 @@ def NormalizeValues(Image):
 
     return N_Image
 
-def GetNeighbours(Array2D):
+def GetNeighbours(Array2D, N=1, Print=False):
     """
     Function used to get values of the neighbourhood pixels (based on numpy.roll)
     :param Array2D: Row x Column numpy array
+    :param N: Number of neighbours offset (1 or 2 usually)
     :return: Neighbourhood pixels values
     """
 
-    YSize, XSize = Array2D.shape[:-1]
-    Dimension = Array2D.shape[-1]
+    # Define a map for the neighbour index computation
+    Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
 
-    print('\nGet neighbours ...')
-    Tic = time.time()
-    Neighbourhood = np.zeros((YSize, XSize, 8, Dimension))
+    # number of neighbours
+    Neighbours = (2*N+1)**2 - 1
+
+    if len(Array2D.shape) > 2:
+        YSize, XSize = Array2D.shape[:-1]
+        Dimension = Array2D.shape[-1]
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours, Dimension))
+
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
+    else:
+        YSize, XSize = Array2D.shape
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours))
+
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, 1, 'symmetric')
+
+    if Print:
+        print('\nGet neighbours ...')
+        Tic = time.time()
+
     i = 0
     for Shift in [-1, 1]:
         for Axis in [0, 1]:
-            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
             i += 1
 
     for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
         for Axis in [(0, 1)]:
-            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
             i += 1
-    Toc = time.time()
-    PrintTime(Tic, Toc)
 
-    return Neighbourhood
+    if N == 2:
+
+        # Pad again the array to avoid border effects
+        if len(Array2D.shape) > 2:
+            Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
+        else:
+            Array2D = np.pad(Array2D, 1, 'symmetric')
+
+        for Shift in [-2, 2]:
+            for Axis in [0, 1]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-2, -1), (2, -1), (-2, 1), (2, 1)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-1, -2), (1, -2), (-1, 2), (1, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+    if Print:
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+    return Neighbourhood, Map
 
 def RBFUnit(Array2D, Plot=False):
     """
@@ -397,9 +450,7 @@ def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=10
     L = np.zeros((Rows, Columns))
     Y = np.zeros((Rows, Columns))
     T = np.zeros((Rows, Columns))
-    W = np.array([[0.5, 1, 0.5],
-                  [1, 0, 1],
-                  [0.5, 1, 0.5]])
+    W = np.ones((Rows, Columns, 8)) * np.array([1, 1, 1, 1, 0.5, 0.5, 0.5, 0.5])
     Theta = np.ones((Rows, Columns))
 
     FiredNumber = 0
@@ -409,8 +460,9 @@ def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=10
     # Perform segmentation
     while Condition:
         N += 1
-        F = S + F * np.exp(-AlphaF) + VF * correlate(Y, W, output='float', mode='reflect')
-        L = L * np.exp(-AlphaL) + VL * correlate(Y, W, output='float', mode='reflect')
+        YN = GetNeighbours(Y)[0]
+        F = S + F * np.exp(-AlphaF) + VF * np.sum(YN * W, axis=2)
+        L = L * np.exp(-AlphaL) + VL * np.sum(YN * W, axis=2)
         Theta = Theta * np.exp(-AlphaT) + VT * Y
 
         U = F * (1 + Beta * L)
@@ -428,35 +480,50 @@ def PCNN(Image, Beta=2, AlphaF=1., VF=0.5, AlphaL=1., VL=0.5, AlphaT=0.05, VT=10
 
     return Output
 
-def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.05])):
+def DiceCoefficient(Bin1, Bin2):
+
+    return np.sum(Bin1 * Bin2) / np.sum(Bin1 + Bin2)
+
+def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
 
     Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
 
     NROIs = Results.ROIs.shape[0]
-    DensityDiff = np.zeros((NROIs,1000))
+    Segmented = np.zeros(Results.ROIs.shape[:-1])
     BinDensities = np.zeros((NROIs,1000))
+    Dices = np.zeros((NROIs,1000))
 
     for i in range(NROIs):
-        Segmented = PCNN(Results.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+        Gray = color.rgb2gray(Results.ROIs[i])
+        Segmented[i] = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
         Values = np.unique(Segmented)
 
         for Index, Value in enumerate(Values):
-            Bin = (Segmented == Value) * 1
-            BinDensities[i,Index] = Bin.sum() / Bin.size
-            DensityDiff[i,Index] = abs(Results.Manuals[i] - BinDensities[i,Index]) / Results.Manuals[i]
+            Bin = (Segmented[i] == Value) * 1
+            Dices[i,Index] = DiceCoefficient(Bin, Results.SegROIs[i])
+            BinDensities[i,Index] = Bin.sum() / Results.BoneROIs[i].sum()
 
-    DensityDiff[DensityDiff == 0.0] = np.nan
-    Sums = np.sum(DensityDiff, axis=0)
-    Cost = np.nanmin(Sums, axis=0)
-    Results.SegMin = np.where(Sums == Cost)[0][0]
-    Results.MinCosts = DensityDiff[:,Results.SegMin]
-    Results.Automatics = BinDensities[:,Results.SegMin]
+    # Sum dices to take average better performance segment
+    SumDices = np.sum(Dices,axis=0)
+    MaxDicesSeg = np.argmax(SumDices)
+    Results.SegMin = MaxDicesSeg
 
-    # # Built data frame with mean values and corresponding mineral densities (see pdf)
-    # Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
-    #                          'Automatic': Results.Automatics})
-    #
-    # FitResults = smf.ols('Automatic ~ 1 + Manual', data=Data2Fit).fit()
+    # Built data frame with mean values and corresponding mineral densities (see pdf)
+    Results.Automatics = BinDensities[:,MaxDicesSeg]
+    Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
+                             'Automatic': Results.Automatics})
+
+    FitResults = smf.ols('Manual ~ 1 + Automatic', data=Data2Fit).fit()
+    PlotRegressionResults(FitResults)
+
+    Y_Obs = FitResults.model.endog
+    Y_Fit = FitResults.fittedvalues
+
+    E = Y_Obs - Y_Fit
+    RSS = np.sum(E**2)
+    SE = np.sqrt(RSS / FitResults.df_resid)
+
+    Cost = SE
 
     return Cost
 
@@ -509,7 +576,7 @@ def PlotRegressionResults(Model,Alpha=0.95):
 Parameters = ParameterClass(2)
 ReadImage(Parameters)
 
-NROIs = 1
+NROIs = 3
 Results = ResultsClass(NROIs)
 
 # Segment bone and extract coordinate
@@ -534,12 +601,19 @@ FilteredX = FilteredX[F1 & F2]
 # Extract random ROI and verify validity
 ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
 
+
 # Extract manual segmentation and compute CM density
 Skeletons = np.zeros(BoneROIs.shape)
 Manuals = np.zeros(NROIs)
 for i in range(NROIs):
-    Skeletons[i] += ExtractSkeleton(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=True)
+    Skeletons[i] += ExtractSkeleton(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=False)
     Manuals[i] += Skeletons[i].sum() / BoneROIs[i].sum()
+
+
+# Select ROIs to fit PCNN parameters
+Results.ROIs = ROIs
+Results.BoneROIs = BoneROIs
+Results.SegROIs = Skeletons
 Results.Manuals = Manuals
 
 # Compute distance between pixel and its neighbours
@@ -551,11 +625,18 @@ Results.ROIs = Distances
 
 
 # Run PSO for PCNN parameters
-Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-2,1]])
-Population = 20
+Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-1,5]])
+Population = 5
 Cs = [0.15, 0.1]
-Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20)
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=5, STC=1E-5)
 PSOResults = PSO.Main(Arguments, Evolution=True)
+
+a = np.array([1])
+for a in range(10):
+    a = np.concatenate([a,np.array([a[-1]*np.exp(-1)])])
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(a,color=(1,0,0))
+plt.show()
 
 # Check PSO results
 Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
@@ -566,15 +647,18 @@ PlotRegressionResults(FitResults)
 
 # Plot results
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
-
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.63156391, 7.44393476, 0.0798891, 1.30944392, 0.44951109, 0.24111599])
+Density = []
 for i in range(NROIs):
-    Segmented = PCNN(Results.ROIs[i], Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+    Gray = color.rgb2gray(Results.ROIs[i])
+    Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
     Values = np.unique(Segmented)
-    Bin = (Segmented == Values[33]) * 1
-    Density = Bin.sum() / Bin.size
-    PlotArray(Bin, 'Segment ' + str(33))
+    Bin = (Segmented == Values[3]) * 1
+    Density.append(Bin.sum() / Results.BoneROIs[i].sum())
+    PlotArray(Bin, 'Segment ' + str(3))
 
-    print('Manual segmentation value: ' + str(Results.Manuals[i]))
-    print('Automatic segmentation value: ' + str(Density))
-    print('Relative difference: ' + str((Results.Manuals[i]-Density) / Results.Manuals[i]))
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
+                         'Automatic': Density})
+Data2Fit = Data2Fit[Data2Fit['Manual'] > 3E-4].reset_index()
+FitData(Data2Fit[['Manual','Automatic']])
 

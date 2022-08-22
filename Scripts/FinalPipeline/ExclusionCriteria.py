@@ -343,20 +343,36 @@ FilteredX = FilteredX[F1 & F2]
 N = 10
 ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=N, Plot=False)
 
+# Canal mean histograms
+Mean = np.zeros((3,20))
+SD = np.zeros((3,20))
+for i in range(3):
+    Hists, Bins = np.histogram(ROIs[0][:, :, i], density=True, bins=20, range=(0, 255))
+    for j in range(1,N):
+        Hist, Bins = np.histogram(ROIs[j][:, :, i], density=True, bins=20, range=(0, 255))
+        Hists = np.vstack([Hists,Hist])
 
-BHist, Bins = np.histogram(ROIs[0][:, :, 0], density=True, bins=20, range=(0, 255))
-for i in range(1,N):
-    Hist, Bins = np.histogram(ROIs[i][:, :, 0], density=True, bins=20, range=(0, 255))
-    BHist = np.vstack([BHist,Hist])
-
-Mean = np.mean(BHist, axis=0)
-SD = np.std(BHist, axis=0, ddof=1)
+    Mean[i] = np.mean(Hists, axis=0)
+    SD[i] = np.std(Hists, axis=0, ddof=1)
 
 Width = Bins[1]
 Bins = 0.5 * (Bins[1:] + Bins[:-1])
+Colors = [(1,0,0),(0,1,0),(0,0,1)]
 
-Figure, Axis = plt.subplots(2,2)
-Axis[0].imshow(ROIs[-1])
-Axis[1].bar(Bins, BHist[-1], width=Width , edgecolor=(0, 0, 1), color=(1, 1, 1, 0))
-Axis[1].bar(Bins, Mean, width=Width, color=(0.5, 0.5, 0.5, 0.5), yerr=SD)
-plt.show()
+for ROI in range(N):
+    Figure, Axis = plt.subplots(2,2)
+    k = 0
+    for i in range(2):
+        for j in range(2):
+            if i == 0 and j == 0:
+                Axis[i,j].imshow(ROIs[ROI].astype('uint8'))
+
+            else:
+                Hist = np.histogram(ROIs[ROI][:, :, k], density=True, bins=20, range=(0, 255))[0]
+                Axis[i,j].bar(Bins, Mean[k], width=Width, color=(0.5, 0.5, 0.5, 0.5), yerr=SD[k])
+                Axis[i,j].bar(Bins, Hist, width=Width, edgecolor=Colors[k], color=(1, 1, 1, 0))
+                k += 1
+
+            Axis[i, j].axis('off')
+
+    plt.show()

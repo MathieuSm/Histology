@@ -452,7 +452,7 @@ PlotImage(Gray)
 Otsu = filters.threshold_otsu(Gray)
 Edges = canny(Gray, sigma=1, high_threshold=Otsu, low_threshold=0)
 LargeEdges = morphology.binary_dilation(Edges,morphology.disk(2))
-PlotImage(Edges)
+PlotImage(LargeEdges)
 
 # PCNN edges
 PCNN_Edges = SPCNN_Edges(1-Gray,Beta=2,Delta=1/5,VT=100)
@@ -462,7 +462,7 @@ Edges[PCNN_Edges == np.unique(PCNN_Edges)[0]] = 1
 PlotImage(Edges)
 
 # Compute distances in individual RGB dimensions
-Distances, Map = ComputeDistances(Array)
+Distances, Map = ComputeDistances(Filtered)
 PlotImage(np.linalg.norm(Distances,axis=3).max(axis=2))
 
 MinDistances = np.linalg.norm(Distances,axis=3).min(axis=2)
@@ -549,6 +549,6 @@ def merge_mean_color(graph, src, dst):
     graph.nodes[dst]['mean color'] = (graph.nodes[dst]['total color'] /
                                       graph.nodes[dst]['pixel count'])
 RAG = graph.rag_mean_color(Filtered,Groups)
-Merged = graph.merge_hierarchical(Groups,RAG,15,True,False,merge_mean_color,_weight_mean_color)
+Merged = graph.merge_hierarchical(Groups,RAG,30,False,False,merge_mean_color,_weight_mean_color)
 Means, MergedImage = MeansGroupsValues(Merged, Filtered)
 PlotImage(MergedImage)

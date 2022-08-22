@@ -810,14 +810,14 @@ for i in range(len(ROIs)):
     Data.append(np.sum(Segments) / Segments.size)
 
 Data2Fit = pd.DataFrame({'Manual':Density,'Automatic':Data})
-Data2Fit = Data2Fit[Data2Fit['Manual'] > 1E-4].reset_index()
-Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit)
+Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
 
 Figure, Axis = plt.subplots(1,1)
 Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
 plt.show()
 
-Drop = [0,1,6,8,9]
+Drop = [0,2,8]
 Keep = [2,3,4,5,7]
 FitData(Data2Fit.drop(Drop).reset_index(drop=True))
 

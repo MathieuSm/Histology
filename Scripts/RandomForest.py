@@ -367,7 +367,7 @@ features_func = partial(feature.multiscale_basic_features,
 ROIFeatures = []
 for i in range(N):
     FilteredROI = filters.gaussian(ROIs[i],sigma=1, multichannel=True)
-    PlotImage(FilteredROI)
+    # PlotImage(FilteredROI)
     ROIFeatures.append(features_func(FilteredROI))
 
 clf = RandomForestClassifier(n_estimators=50, n_jobs=-1,
@@ -423,7 +423,9 @@ for i in range(len(ROIs)):
     Data.append(np.sum(Results == 4) / Results.size)
 
 Data2Fit = pd.DataFrame({'Manual':Density,'Automatic':Data})
-Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit)
+Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
+
 
 Figure, Axis = plt.subplots(1,1)
 Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
