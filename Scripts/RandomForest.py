@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import time
 import numpy as np
 import pandas as pd
@@ -10,6 +11,9 @@ from scipy.stats.distributions import t
 from skimage import io, morphology, measure, filters
 from PIL import Image
 
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+from Utilities import *
+
 Image.MAX_IMAGE_PIXELS = None
 
 class ParametersClass:
@@ -19,32 +23,6 @@ class ParametersClass:
         self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
         self.Threshold = Threshold
         self.SubArea = SubArea
-
-def PrintTime(Tic, Toc):
-    """
-    Print elapsed time in seconds to time in HH:MM:SS format
-    :param Tic: Actual time at the beginning of the process
-    :param Toc: Actual time at the end of the process
-    """
-
-    Delta = Toc - Tic
-
-    Hours = np.floor(Delta / 60 / 60)
-    Minutes = np.floor(Delta / 60) - 60 * Hours
-    Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
-
-    print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
-
-def PlotImage(Array):
-
-    Figure, Axis = plt.subplots(1,1,figsize=(10,10))
-    if Array.shape[-1] == 3:
-        Axis.imshow(Array)
-    else:
-        Axis.imshow(Array, cmap='binary_r')
-    Axis.axis('off')
-    plt.subplots_adjust(0,0,1,1)
-    plt.show()
 
 def PixelSize(Image, Length, Plot=False):
 
@@ -276,6 +254,67 @@ def ExtractSkeleton(Image, Plot=False):
 
     return Skeleton
 
+def FitData(DataFrame):
+
+    Formula = DataFrame.columns[1] + ' ~ ' + DataFrame.columns[0]
+    FitResults = smf.ols(Formula, data=DataFrame).fit()
+
+    # Calculate R^2, p-value, 95% CI, SE, N
+    Y_Obs = FitResults.model.endog
+    Y_Fit = FitResults.fittedvalues
+
+    E = Y_Obs - Y_Fit
+    RSS = np.sum(E ** 2)
+    SE = np.sqrt(RSS / FitResults.df_resid)
+
+    N = int(FitResults.nobs)
+    R2 = FitResults.rsquared
+    p = FitResults.pvalues[1]
+
+    CI_l = FitResults.conf_int()[0][1]
+    CI_r = FitResults.conf_int()[1][1]
+
+    X = np.matrix(FitResults.model.exog)
+    X_Obs = np.sort(np.array(X[:, 1]).reshape(len(X)))
+    C = np.matrix(FitResults.cov_params())
+    B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
+    Alpha = 0.95
+    t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
+    CI_Line_u = Y_Fit + t_Alpha[0] * B_0
+    CI_Line_o = Y_Fit + t_Alpha[1] * B_0
+    Sorted_CI_u = CI_Line_u[np.argsort(FitResults.model.exog[:,1])]
+    Sorted_CI_o = CI_Line_o[np.argsort(FitResults.model.exog[:,1])]
+
+    NoteYPos = 0.925
+    NoteYShift = 0.075
+
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
+    Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
+    Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
+                      label=str(int(Alpha * 100)) + '% CI')
+    Axes.plot(X[:, 1], Y_Obs, linestyle='none', fillstyle='none', marker='o', color=(0, 0, 1), label='Data')
+    Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
+                  xy=(0.05, NoteYPos), xycoords='axes fraction')
+    # Axes.annotate(r'$N$ : ' + str(N), xy=(0.05, NoteYPos),
+    #               xycoords='axes fraction')
+    Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift),
+                  xycoords='axes fraction')
+    Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift*2),
+                  xycoords='axes fraction')
+    Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift*3),
+                  xycoords='axes fraction')
+    Axes.set_ylabel(DataFrame.columns[1])
+    Axes.set_xlabel(DataFrame.columns[0])
+    plt.subplots_adjust(left=0.15, bottom=0.15)
+    plt.legend(loc='lower right')
+    plt.show()
+
+    # Add fitted values and residuals to data
+    DataFrame['Fitted Value'] = Y_Fit
+    DataFrame['Residuals'] = E
+
+    return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
+
 # Read image
 Parameters = ParametersClass(2)
 ReadImage()
@@ -363,7 +402,7 @@ PlotImage(Label)
 
 L = Seg_ROI[:,:,0] == 255
 L = morphology.binary_dilation(L,morphology.disk(2)) * 1 + 1
-F = filters.gaussian(ROIs[0],sigma=1, multichannel=True)
+F = filters.gaussian(ROI,sigma=1, multichannel=True)
 PlotImage(L[470:520,350:400])
 R = features_func(F)
 
@@ -373,7 +412,7 @@ Toc = time.time()
 PrintTime(Tic, Toc)
 result = future.predict_segmenter(R, clf)
 
-PlotImage(result == 4)
+PlotImage(result==4)
 
 
 Data = []
@@ -383,53 +422,59 @@ for i in range(len(ROIs)):
     Results = future.predict_segmenter(R, clf)
     Data.append(np.sum(Results == 4) / Results.size)
 
-Figure, Axis = plt.subplots(1,1)
-Axis.scatter(Density,Data)
-plt.show()
-
 Data2Fit = pd.DataFrame({'Manual':Density,'Automatic':Data})
-FitResults = smf.ols('Manual ~ Automatic',data=Data2Fit).fit()
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit)
 
-FitResults.summary()
-# Calculate R^2, p-value, 95% CI, SE, N
-Y_Obs = FitResults.model.endog
-Y_Fit = FitResults.fittedvalues
-
-E = Y_Obs - Y_Fit
-RSS = np.sum(E ** 2)
-SE = np.sqrt(RSS / FitResults.df_resid)
-CI_l = FitResults.conf_int()[0][1]
-CI_r = FitResults.conf_int()[1][1]
-N = int(FitResults.nobs)
-R2 = FitResults.rsquared
-p = FitResults.pvalues[1]
-X = np.matrix(FitResults.model.exog)
-X_Obs = np.sort(np.array(X[:, 1]).reshape(len(X)))
-C = np.matrix(FitResults.cov_params())
-B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
-Alpha = 0.95
-t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
-CI_Line_u = Y_Fit + t_Alpha[0] * B_0
-CI_Line_o = Y_Fit + t_Alpha[1] * B_0
-Sorted_CI_u = CI_Line_u[np.argsort(FitResults.model.exog[:,1])]
-Sorted_CI_o = CI_Line_o[np.argsort(FitResults.model.exog[:,1])]
-
-NoteYPos = 0.325
-NoteYShift = 0.075
-
-Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
-Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
-Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
-                  label=str(int(Alpha * 100)) + '% CI')
-Axes.plot(X[:, 1], Y_Obs, linestyle='none', fillstyle='none', marker='o', color=(0, 0, 1), label='Data')
-Axes.annotate(r'$N$ : ' + str(N), xy=(0.05, NoteYPos), xycoords='axes fraction')
-Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift), xycoords='axes fraction')
-Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift*2), xycoords='axes fraction')
-Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift*3), xycoords='axes fraction')
-Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']', xy=(0.05, NoteYPos - NoteYShift*4),
-              xycoords='axes fraction')
-Axes.set_ylabel(Data2Fit.columns[1])
-Axes.set_xlabel(Data2Fit.columns[0])
-plt.subplots_adjust(left=0.15, bottom=0.15)
-plt.legend(loc='lower right')
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
 plt.show()
+
+FitData(Data2Fit.drop([3]).reset_index(drop=True))
+FitData(Data2Fit.drop([1,4,5,6,9]).reset_index(drop=True))
+
+
+ROINumber = 9
+PlotImage(ROIs[ROINumber])
+
+SegROI = Parameters.SegImage[Ys[ROINumber, 0]:Ys[ROINumber, 1], Xs[ROINumber, 0]:Xs[ROINumber, 1]]
+PlotImage(SegROI)
+
+F = filters.gaussian(ROIs[ROINumber],sigma=1, multichannel=True)
+R = features_func(F)
+Results = future.predict_segmenter(R, clf)
+PlotImage(Results == 4)
+
+B1 = []
+for i in [1,4,5,6,9]:
+    SegROI = Parameters.SegImage[Ys[i, 0]:Ys[i, 1], Xs[i, 0]:Xs[i, 1]]
+    B1.append(SegROI)
+HistoError(B1,ylim=0.015)
+
+B2 = []
+for i in [0,2,3,7,8]:
+    SegROI = Parameters.SegImage[Ys[i, 0]:Ys[i, 1], Xs[i, 0]:Xs[i, 1]]
+    B2.append(SegROI)
+HistoError(B2,ylim=0.015)
+
+B1 = np.concatenate(B1,axis=0)
+B2 = np.concatenate(B2,axis=0)
+NBins = 20
+B1H, B2H = np.zeros((3,NBins)), np.zeros((3,NBins))
+for i in range(3):
+    B1H[i], Bins = np.histogram(B1[:, :, i], density=True, bins=NBins, range=(0, 255))
+    B2H[i], Bins = np.histogram(B2[:, :, i], density=True, bins=NBins, range=(0, 255))
+
+Width = Bins[1]
+Bins = 0.5 * (Bins[1:] + Bins[:-1])
+
+Figure, Axes = plt.subplots(1,1)
+Axes.bar(Bins, B1H[0]-B2H[0], width=Width, color=(1, 1, 1, 0), edgecolor=(1,0,0))
+Axes.bar(Bins, B1H[1]-B2H[1], width=Width, color=(1, 1, 1, 0), edgecolor=(0,1,0))
+Axes.bar(Bins, B1H[2]-B2H[2], width=Width, color=(1, 1, 1, 0), edgecolor=(0,0,1))
+plt.show()
+
+[1,4,5,6,9]
+[0,2,3,7,8]
+i = 9
+PlotImage(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]])
+PlotImage(ROI)

@@ -97,7 +97,6 @@ def PlotEvolution(Xs, G_Bests, GBVs, Ranges):
         Axes2.legend(loc='upper right', bbox_to_anchor=(1,1.125))
         plt.subplots_adjust(0.2,0.15,0.85,0.9)
         plt.show()
-
 def Main(Arguments, Plot=False, Evolution=False):
 
     Tic = time.time()
