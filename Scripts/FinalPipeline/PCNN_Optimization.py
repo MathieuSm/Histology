@@ -40,6 +40,7 @@ class ParameterClass:
         self.N = ImageNumber
         self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
         self.Threshold = Threshold
+        self.SE = 1E4
 
 class PSOArgs:
 
@@ -512,26 +513,30 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
                 Bin = (Segmented == Value) * 1
                 Dices[iKey,i,Index] = DiceCoefficient(Bin, Dict[Key]['Skeleton'][i])
                 BinDensities[iKey,i,Index] = Bin.sum() / Dict[Key]['Bone'][i].sum()
+    Results.Manuals = Values
 
     # Sum dices to take average better performance segment
     SumDices = np.sum(Dices,axis=(1,0))
     MaxDicesSeg = np.argmax(SumDices)
-    Results.SegMin = MaxDicesSeg
 
-    # Store results
-    Results.Automatics = BinDensities[:, :, MaxDicesSeg]
 
     # Built data frame with mean values and corresponding mineral densities (see pdf)
     Data2Fit = pd.DataFrame({'Manual': Values[1,:],
-                             'Automatic': np.mean(Results.Automatics,axis=1)})
+                             'Automatic': np.mean(BinDensities[:, :, MaxDicesSeg],axis=1)})
     Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
     Results.Data = Data2Fit
     Results.Fit = FitResults
     Results.SE = SE
 
-    Cost = SE
+    # Store results
+    if SE < Results.SE:
+        Results.SegMin = MaxDicesSeg
+        Results.Automatics = BinDensities[:, :, MaxDicesSeg]
+        Results.Data = Data2Fit
+        Results.Fit = FitResults
+        Results.SE = SE
 
-    return Cost
+    return SE
 
 def FitData(DataFrame):
 
@@ -649,39 +654,82 @@ Results.Dict = Dict
 
 # Run PSO for PCNN parameters
 Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-1,5]])
-Population = 5
+Population = 20
 Cs = [0.15, 0.1]
-Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=5, STC=1E-5)
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20, STC=1E-5)
 PSOResults = PSO.Main(Arguments, Evolution=True)
 
-a = np.array([1])
-for a in range(10):
-    a = np.concatenate([a,np.array([a[-1]*np.exp(-1)])])
-Figure, Axis = plt.subplots(1,1)
-Axis.plot(a,color=(1,0,0))
-plt.show()
+# a = np.array([1])
+# for a in range(10):
+#     a = np.concatenate([a,np.array([a[-1]*np.exp(-1)])])
+# Figure, Axis = plt.subplots(1,1)
+# Axis.plot(a,color=(1,0,0))
+# plt.show()
 
 # Check PSO results
-Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
-                         'Automatic': Results.Automatics})
-
-FitResults = smf.ols('Automatic ~ 1 + Manual', data=Data2Fit).fit()
-PlotRegressionResults(FitResults)
-
-# Plot results
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
-Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.63156391, 7.44393476, 0.0798891, 1.30944392, 0.44951109, 0.24111599])
-Density = []
-for i in range(NROIs):
-    Gray = color.rgb2gray(Results.ROIs[i])
-    Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
-    Values = np.unique(Segmented)
-    Bin = (Segmented == Values[3]) * 1
-    Density.append(Bin.sum() / Results.BoneROIs[i].sum())
-    PlotArray(Bin, 'Segment ' + str(3))
+# Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.63156391, 7.44393476, 0.0798891, 1.30944392, 0.44951109, 0.24111599])
+# Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([1.7682048, 4.192816, 0.15554972, 2.60929179, 0.57653611, 0.22790711])
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([2.68075651, 6.48604414, 0.33807857, 8.56316788, 0.24789681, 0.72636055])
 
-Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
-                         'Automatic': Density})
-Data2Fit = Data2Fit[Data2Fit['Manual'] > 3E-4].reset_index()
-FitData(Data2Fit[['Manual','Automatic']])
+for Key in Dict.keys():
+    for i in range(NROIs):
+        Gray = color.rgb2gray(Dict[Key]['ROI'][i])
+        Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+        Values = np.unique(Segmented)
+        Bin = (Segmented == Values[Results.SegMin]) * 1
+        PlotArray(Bin, 'Segment ' + str(Results.SegMin))
 
+# Plot final results
+X = Results.Automatics.mean(axis=1)
+XError = np.abs(X - np.array([Results.Automatics.min(axis=1), Results.Automatics.max(axis=1)]))
+Y = Results.Manuals[1,:]
+YError = np.abs(Y - np.array([Results.Manuals[0,:],Results.Manuals[2,:]]))
+
+# Calculate R^2, p-value, 95% CI, SE, N
+Y_Obs = Results.Fit.model.endog
+Y_Fit = Results.Fit.fittedvalues
+
+E = Y_Obs - Y_Fit
+RSS = np.sum(E**2)
+SE = np.sqrt(RSS / Results.Fit.df_resid)
+
+N = int(Results.Fit.nobs)
+R2 = Results.Fit.rsquared
+p = Results.Fit.pvalues[1]
+
+CI_l = Results.Fit.conf_int()[0][1]
+CI_r = Results.Fit.conf_int()[1][1]
+
+X = np.matrix(Results.Fit.model.exog)
+X_Obs = np.sort(np.array(X[:, 1]).reshape(len(X)))
+C = np.matrix(Results.Fit.cov_params())
+B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
+Alpha = 0.95
+t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
+CI_Line_u = Y_Fit + t_Alpha[0] * B_0
+CI_Line_o = Y_Fit + t_Alpha[1] * B_0
+Sorted_CI_u = CI_Line_u[np.argsort(Results.Fit.model.exog[:, 1])]
+Sorted_CI_o = CI_Line_o[np.argsort(Results.Fit.model.exog[:, 1])]
+
+NoteYPos = 0.925
+NoteYShift = 0.075
+
+Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
+Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
+Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
+                  label=str(int(Alpha * 100)) + '% CI')
+Axes.errorbar(X[:, 1],Y_Fit,xerr=XError,yerr=YError,fmt='o',color=(0,0,1),mfc=(1,1,1),ecolor=(0,0,1,0.5), label='Data')
+Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
+              xy=(0.05, NoteYPos), xycoords='axes fraction')
+Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift),
+              xycoords='axes fraction')
+Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift * 2),
+              xycoords='axes fraction')
+Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift * 3),
+              xycoords='axes fraction')
+Axes.set_ylabel('Manual segmentation')
+Axes.set_xlabel('Automatic segmentation')
+plt.subplots_adjust(left=0.15, bottom=0.15)
+plt.legend(loc='lower right')
+plt.show()
