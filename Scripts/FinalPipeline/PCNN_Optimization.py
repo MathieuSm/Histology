@@ -488,140 +488,163 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
 
     Beta, AlphaF, VF, AlphaL, VL, AlphaT = Parameters
 
-    NROIs = Results.ROIs.shape[0]
-    Segmented = np.zeros(Results.ROIs.shape[:-1])
-    BinDensities = np.zeros((NROIs,1000))
-    Dices = np.zeros((NROIs,1000))
+    # Extract manual segmentation values
+    Dict = Results.Dict
+    Keys = Dict.keys()
 
-    for i in range(NROIs):
-        Gray = color.rgb2gray(Results.ROIs[i])
-        Segmented[i] = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
-        Values = np.unique(Segmented)
+    # Set arrays for average best segment
+    NROIs = Dict['391LM']['ROI'].shape[0]
+    Dices = np.zeros((len(Keys), NROIs, 1000))
+    BinDensities = np.zeros((len(Keys), NROIs, 1000))
 
-        for Index, Value in enumerate(Values):
-            Bin = (Segmented[i] == Value) * 1
-            Dices[i,Index] = DiceCoefficient(Bin, Results.SegROIs[i])
-            BinDensities[i,Index] = Bin.sum() / Results.BoneROIs[i].sum()
+    Values = np.zeros((3,len(Keys)))
+    for iKey, Key in enumerate(Keys):
+        Values[0,iKey] = np.min(Dict[Key]['Manual'])
+        Values[1,iKey] = np.mean(Dict[Key]['Manual'])
+        Values[2,iKey] = np.max(Dict[Key]['Manual'])
+
+        for i in range(NROIs):
+            Gray = color.rgb2gray(Dict[Key]['ROI'][i])
+            Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
+
+            SegValues = np.unique(Segmented)
+            for Index, Value in enumerate(SegValues):
+                Bin = (Segmented == Value) * 1
+                Dices[iKey,i,Index] = DiceCoefficient(Bin, Dict[Key]['Skeleton'][i])
+                BinDensities[iKey,i,Index] = Bin.sum() / Dict[Key]['Bone'][i].sum()
 
     # Sum dices to take average better performance segment
-    SumDices = np.sum(Dices,axis=0)
+    SumDices = np.sum(Dices,axis=(1,0))
     MaxDicesSeg = np.argmax(SumDices)
     Results.SegMin = MaxDicesSeg
 
+    # Store results
+    Results.Automatics = BinDensities[:, :, MaxDicesSeg]
+
     # Built data frame with mean values and corresponding mineral densities (see pdf)
-    Results.Automatics = BinDensities[:,MaxDicesSeg]
-    Data2Fit = pd.DataFrame({'Manual': Results.Manuals,
-                             'Automatic': Results.Automatics})
-
-    FitResults = smf.ols('Manual ~ 1 + Automatic', data=Data2Fit).fit()
-    PlotRegressionResults(FitResults)
-
-    Y_Obs = FitResults.model.endog
-    Y_Fit = FitResults.fittedvalues
-
-    E = Y_Obs - Y_Fit
-    RSS = np.sum(E**2)
-    SE = np.sqrt(RSS / FitResults.df_resid)
+    Data2Fit = pd.DataFrame({'Manual': Values[1,:],
+                             'Automatic': np.mean(Results.Automatics,axis=1)})
+    Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
+    Results.Data = Data2Fit
+    Results.Fit = FitResults
+    Results.SE = SE
 
     Cost = SE
 
     return Cost
 
-def PlotRegressionResults(Model,Alpha=0.95):
+def FitData(DataFrame):
 
-    print(Model.summary())
+    Formula = DataFrame.columns[1] + ' ~ ' + DataFrame.columns[0]
+    FitResults = smf.ols(Formula, data=DataFrame).fit()
 
-    ## Plot results
-    Y_Obs = Model.model.endog
-    Y_Fit = Model.fittedvalues
-    N = int(Model.nobs)
-    C = np.matrix(Model.cov_params())
-    X = np.matrix(Model.model.exog)
-    X_Obs = np.sort(np.array(X[:,1]).reshape(len(X)))
+    # Calculate R^2, p-value, 95% CI, SE, N
+    Y_Obs = FitResults.model.endog
+    Y_Fit = FitResults.fittedvalues
 
-
-    ## Compute R2 and standard error of the estimate
     E = Y_Obs - Y_Fit
     RSS = np.sum(E ** 2)
-    SE = np.sqrt(RSS / Model.df_resid)
-    TSS = np.sum((Model.model.endog - Model.model.endog.mean()) ** 2)
-    RegSS = TSS - RSS
-    R2 = RegSS / TSS
+    SE = np.sqrt(RSS / FitResults.df_resid)
 
-    ## Compute CI lines
+    N = int(FitResults.nobs)
+    R2 = FitResults.rsquared
+    p = FitResults.pvalues[1]
+
+    CI_l = FitResults.conf_int()[0][1]
+    CI_r = FitResults.conf_int()[1][1]
+
+    X = np.matrix(FitResults.model.exog)
+    X_Obs = np.sort(np.array(X[:, 1]).reshape(len(X)))
+    C = np.matrix(FitResults.cov_params())
     B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
+    Alpha = 0.95
     t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
-    CI_Line_u = Y_Fit + t_Alpha[0] * SE * B_0
-    CI_Line_o = Y_Fit + t_Alpha[1] * SE * B_0
+    CI_Line_u = Y_Fit + t_Alpha[0] * B_0
+    CI_Line_o = Y_Fit + t_Alpha[1] * B_0
+    Sorted_CI_u = CI_Line_u[np.argsort(FitResults.model.exog[:,1])]
+    Sorted_CI_o = CI_Line_o[np.argsort(FitResults.model.exog[:,1])]
 
+    NoteYPos = 0.925
+    NoteYShift = 0.075
 
-    ## Plots
-    DPI = 100
-    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=DPI, sharey=True, sharex=True)
-    Axes.plot(X[:,1], Y_Fit, color=(1,0,0), label='Fit')
-    # Axes.fill_between(X_Obs, np.sort(CI_Line_o), np.sort(CI_Line_u), color=(0, 0, 0), alpha=0.1, label=str(int(Alpha*100)) + '% CI')
-    Axes.plot(X[:,1], Y_Obs, linestyle='none', marker='o', color=(0,0,0), fillstyle='none')
-    Axes.annotate(r'$N$  : ' + str(N), xy=(0.8, 0.175), xycoords='axes fraction')
-    Axes.annotate(r'$R^2$ : ' + format(round(R2, 2), '.2f'), xy=(0.8, 0.1), xycoords='axes fraction')
-    Axes.annotate(r'$SE$ : ' + format(round(SE, 2), '.2f'), xy=(0.8, 0.025), xycoords='axes fraction')
-    Axes.set_ylabel('Manual Segmentation')
-    Axes.set_xlabel('Automatic Segmentation')
+    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
+    Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
+    Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
+                      label=str(int(Alpha * 100)) + '% CI')
+    Axes.plot(X[:, 1], Y_Obs, linestyle='none', fillstyle='none', marker='o', color=(0, 0, 1), label='Data')
+    Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
+                  xy=(0.05, NoteYPos), xycoords='axes fraction')
+    # Axes.annotate(r'$N$ : ' + str(N), xy=(0.05, NoteYPos),
+    #               xycoords='axes fraction')
+    Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift),
+                  xycoords='axes fraction')
+    Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift*2),
+                  xycoords='axes fraction')
+    Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift*3),
+                  xycoords='axes fraction')
+    Axes.set_ylabel(DataFrame.columns[1])
+    Axes.set_xlabel(DataFrame.columns[0])
     plt.subplots_adjust(left=0.15, bottom=0.15)
-    plt.legend()
+    plt.legend(loc='lower right')
     plt.show()
-    plt.close(Figure)
 
+    # Add fitted values and residuals to data
+    DataFrame['Fitted Value'] = Y_Fit
+    DataFrame['Residuals'] = E
 
-# Read Image
-Parameters = ParameterClass(2)
-ReadImage(Parameters)
+    return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
+# Set parameters
+Medial = [0,1,2,3,4]
 NROIs = 3
-Results = ResultsClass(NROIs)
+PhysicalSize = 2000
 
-# Segment bone and extract coordinate
-Bone = SegmentBone(Parameters.SegImage, Plot='Full')
-Y, X = np.where(Bone)
+Dict = {}
+for Sample in range(len(Medial)):
 
-# Set ROI pixel size
-PhysicalSize = 1000
-ROISize = int(round(PhysicalSize / Parameters.PixelLength))
+    SampleDict = {}
 
-# Filter positions too close to the border
-F1 = X > ROISize / 2
-F2 = X < Bone.shape[1] - ROISize / 2
-FilteredX = X[F1 & F2]
-FilteredY = Y[F1 & F2]
+    # Read Image
+    Parameters = ParameterClass(Sample)
+    ReadImage(Parameters)
 
-F1 = FilteredY > ROISize / 2
-F2 = FilteredY < Bone.shape[0] - ROISize / 2
-FilteredY = FilteredY[F1 & F2]
-FilteredX = FilteredX[F1 & F2]
+    Results = ResultsClass(NROIs)
 
-# Extract random ROI and verify validity
-ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
+    # Segment bone and extract coordinate
+    Bone = SegmentBone(Parameters.SegImage, Plot=None)
+    Y, X = np.where(Bone)
 
+    # Set ROI pixel size
+    ROISize = int(round(PhysicalSize / Parameters.PixelLength))
 
-# Extract manual segmentation and compute CM density
-Skeletons = np.zeros(BoneROIs.shape)
-Manuals = np.zeros(NROIs)
-for i in range(NROIs):
-    Skeletons[i] += ExtractSkeleton(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=False)
-    Manuals[i] += Skeletons[i].sum() / BoneROIs[i].sum()
+    # Filter positions too close to the border
+    F1 = X > ROISize / 2
+    F2 = X < Bone.shape[1] - ROISize / 2
+    FilteredX = X[F1 & F2]
+    FilteredY = Y[F1 & F2]
 
+    F1 = FilteredY > ROISize / 2
+    F2 = FilteredY < Bone.shape[0] - ROISize / 2
+    FilteredY = FilteredY[F1 & F2]
+    FilteredX = FilteredX[F1 & F2]
 
-# Select ROIs to fit PCNN parameters
-Results.ROIs = ROIs
-Results.BoneROIs = BoneROIs
-Results.SegROIs = Skeletons
-Results.Manuals = Manuals
+    # Extract random ROI and verify validity
+    ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
 
-# Compute distance between pixel and its neighbours
-Distances = np.zeros(BoneROIs.shape)
-for i in range(NROIs):
-    Distances[i] = RBFUnit(ROIs[i], Plot=True)
-Results.ROIs = Distances
+    # Extract manual segmentation and compute CM density
+    Skeletons = np.zeros(BoneROIs.shape)
+    Manuals = np.zeros(NROIs)
+    for i in range(NROIs):
+        Skeletons[i] += ExtractSkeleton(Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]], Plot=False)
+        Manuals[i] += Skeletons[i].sum() / BoneROIs[i].sum()
 
+    # Store data in dictionary
+    SampleDict['ROI'] = ROIs
+    SampleDict['Bone'] = BoneROIs
+    SampleDict['Skeleton'] = Skeletons
+    SampleDict['Manual'] = Manuals
+    Dict[Parameters.Name[:-1]] = SampleDict
+Results.Dict = Dict
 
 
 # Run PSO for PCNN parameters
