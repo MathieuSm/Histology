@@ -732,3 +732,7 @@ Axes.set_xlabel('Automatic segmentation')
 plt.subplots_adjust(left=0.15, bottom=0.15)
 plt.legend(loc='lower right')
 plt.show()
+
+import pickle
+with open('OptimizationData.pkl', 'wb') as f:
+    pickle.dump(Dict, f)
