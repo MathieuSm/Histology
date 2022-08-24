@@ -523,10 +523,7 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
     # Built data frame with mean values and corresponding mineral densities (see pdf)
     Data2Fit = pd.DataFrame({'Manual': Values[1,:],
                              'Automatic': np.mean(BinDensities[:, :, MaxDicesSeg],axis=1)})
-    Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
-    Results.Data = Data2Fit
-    Results.Fit = FitResults
-    Results.SE = SE
+    Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']], Plot=False)
 
     # Store results
     if SE < Results.SE:
@@ -538,7 +535,7 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
 
     return SE
 
-def FitData(DataFrame):
+def FitData(DataFrame, Plot=True):
 
     Formula = DataFrame.columns[1] + ' ~ ' + DataFrame.columns[0]
     FitResults = smf.ols(Formula, data=DataFrame).fit()
@@ -572,26 +569,27 @@ def FitData(DataFrame):
     NoteYPos = 0.925
     NoteYShift = 0.075
 
-    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
-    Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
-    Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
-                      label=str(int(Alpha * 100)) + '% CI')
-    Axes.plot(X[:, 1], Y_Obs, linestyle='none', fillstyle='none', marker='o', color=(0, 0, 1), label='Data')
-    Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
-                  xy=(0.05, NoteYPos), xycoords='axes fraction')
-    # Axes.annotate(r'$N$ : ' + str(N), xy=(0.05, NoteYPos),
-    #               xycoords='axes fraction')
-    Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift),
-                  xycoords='axes fraction')
-    Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift*2),
-                  xycoords='axes fraction')
-    Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift*3),
-                  xycoords='axes fraction')
-    Axes.set_ylabel(DataFrame.columns[1])
-    Axes.set_xlabel(DataFrame.columns[0])
-    plt.subplots_adjust(left=0.15, bottom=0.15)
-    plt.legend(loc='lower right')
-    plt.show()
+    if Plot:
+        Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
+        Axes.plot(X[:, 1], Y_Fit, color=(1, 0, 0), label='Fit')
+        Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.1,
+                          label=str(int(Alpha * 100)) + '% CI')
+        Axes.plot(X[:, 1], Y_Obs, linestyle='none', fillstyle='none', marker='o', color=(0, 0, 1), label='Data')
+        Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
+                      xy=(0.05, NoteYPos), xycoords='axes fraction')
+        # Axes.annotate(r'$N$ : ' + str(N), xy=(0.05, NoteYPos),
+        #               xycoords='axes fraction')
+        Axes.annotate(r'$R^2$ : ' + str(R2.round(2)), xy=(0.05, NoteYPos - NoteYShift),
+                      xycoords='axes fraction')
+        Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - NoteYShift*2),
+                      xycoords='axes fraction')
+        Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift*3),
+                      xycoords='axes fraction')
+        Axes.set_ylabel(DataFrame.columns[1])
+        Axes.set_xlabel(DataFrame.columns[0])
+        plt.subplots_adjust(left=0.15, bottom=0.15)
+        plt.legend(loc='lower right')
+        plt.show()
 
     # Add fitted values and residuals to data
     DataFrame['Fitted Value'] = Y_Fit
@@ -677,8 +675,9 @@ for Key in Dict.keys():
         Gray = color.rgb2gray(Dict[Key]['ROI'][i])
         Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
         Values = np.unique(Segmented)
-        Bin = (Segmented == Values[Results.SegMin]) * 1
-        PlotArray(Bin, 'Segment ' + str(Results.SegMin))
+        Bin = (Segmented == Values[2]) * 1
+        BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
+        PlotArray(Bin, 'Segment ' + str(2))
 
 # Plot final results
 X = Results.Automatics.mean(axis=1)
