@@ -39,3 +39,4 @@
 
 # Ignore manual of confocal microscope
 Tests/Calcein/Nikon/Docs/
+/OptimizationData.pkl
