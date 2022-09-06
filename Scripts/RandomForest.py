@@ -1,258 +1,28 @@
 #!/usr/bin/env python3
 
+"""
+https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_trainable_segmentation.html
+#sphx-glr-auto-examples-segmentation-plot-trainable-segmentation-py
+"""
+
 import sys
 import time
+import pickle
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from sklearn import metrics
+from skimage import io, future
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
-from skimage import io, morphology, measure, filters
-from PIL import Image
+from sklearn.ensemble import RandomForestClassifier
+from skimage.feature import multiscale_basic_features as mbf
+
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 from Utilities import *
 
-Image.MAX_IMAGE_PIXELS = None
-
-class ParametersClass:
-
-    def __init__(self, ImageNumber, Threshold=0.88, SubArea=[[1800, 2200], [7800, 8200]]):
-        self.N = ImageNumber
-        self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
-        self.Threshold = Threshold
-        self.SubArea = SubArea
-
-def PixelSize(Image, Length, Plot=False):
-
-    """
-    Determine physical size of a pixel
-    :param Image: Image region containing the scalebar as numpy array r x c x 3
-    :param Length: Physical length of the scalebar as integer
-    :param Plot: Plot intermediate results, boolean value
-    :return: Physical size of a pixel
-    """
-
-    Tic = time.time()
-    print('Compute physical pixel size ...')
-
-    Filter1 = Image[:,:,0] < 100
-    Filter2 = Image[:,:,1] < 100
-    Filter3 = Image[:,:,2] < 100
-
-    Bin = np.zeros(Filter1.shape,'int')
-    Bin[Filter1 & Filter2 & Filter3] = 1
-
-    if Plot:
-        Figure, Axis = plt.subplots(1,1)
-        Axis.imshow(Bin,cmap='binary')
-        plt.show()
-
-    RegionProps = measure.regionprops(Bin)[0]
-    Pixels = RegionProps.coords[:,1].max() - RegionProps.coords[:,1].min()
-    PixelLength = Length / Pixels
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
-
-    return PixelLength
-
-def ReadImage(Plot=True):
-
-    # Read image and plot it
-    Directory = Parameters.Directory
-    DataFrame = pd.read_csv(str(Directory / 'Data.csv'))
-    SampleData = DataFrame.loc[Parameters.N]
-    Name = str(str(SampleData['Sample']) + SampleData['Side'][0] + SampleData['Cortex'][0] + '_Seg.jpg')
-    Image = io.imread(str(Directory / Name))[:, :, :3]
-
-    if Plot:
-        Shape = np.array(Image.shape[:-1]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Image)
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Store name, image, and pixel length in parameters class
-    Parameters.Name = Name[:-7]
-    Parameters.SegImage = Image
-    Parameters.Image = io.imread(str(Directory / Name[:-8]) + '.jpg')
-
-    if Parameters.Name[:5] == '418RM':
-        Parameters.PixelLength = PixelSize(Parameters.Image[9400:-400, 12500:-300], 2000, Plot=True)
-    else:
-        Parameters.PixelLength = 1.0460251046025104  # Computed with 418 RM
-
-def SegmentBone(Image, Plot=False, SubArea=None):
-
-    """
-    Segment bone structure
-    :param Image: RGB numpy array dim r x c x 3
-    :param Plot: 'Full' or 'Sub' to plot intermediate results
-    :param SubArea: Indices to plot smaller image of intermediate results
-    :return: Labelled bone image
-    """
-
-    Tic = time.time()
-    print('Segment bone area ...')
-
-    if not SubArea:
-        SubArea = [[0, 1], [0, 1]]
-
-    # Mark areas where there is bone
-    Filter1 = Image[:, :, 0] < 190
-    Filter2 = Image[:, :, 1] < 190
-    Filter3 = Image[:, :, 2] < 235
-    Bone = Filter1 & Filter2 & Filter3
-
-    if Plot == 'Full':
-        Shape = np.array(Image.shape[:-1]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Bone, cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    elif Plot == 'Sub':
-        Shape = np.array([SubArea[1][1]-SubArea[1][0], SubArea[0][1]-SubArea[0][0]]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Bone[SubArea[0][0]:SubArea[0][1],
-                         SubArea[1][0]:SubArea[1][1]], cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Erode and dilate to remove small bone parts
-    Disk = morphology.disk(2)
-    Dilated = morphology.binary_dilation(Bone, Disk)
-    Bone = morphology.binary_erosion(Dilated, Disk)
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
-
-    return Bone
-
-def RandCoords(Coords, ROINumber, TotalNROIs):
-
-    XCoords, YCoords = Coords
-
-    XRange = XCoords.max() - XCoords.min()
-    Width = XRange / (TotalNROIs + 1)
-    RandX = int((ROINumber + 1) * XRange / (TotalNROIs + 1) + np.random.randn() * Width**(1 / 2))
-    YCoords = YCoords[XCoords == RandX]
-    YRange = YCoords.max() - YCoords.min()
-    RandY = int(np.median(YCoords) + np.random.randn() * (Width * YRange/XRange)**(1 / 2))
-
-    return [RandX, RandY]
-
-def ExtractROIs(Bone, XCoords, YCoords, ROISize, NROIs=1, Plot=False, ROIsPlot=False):
-
-    Tic = time.time()
-    print('\nBegin ' + str(NROIs) + ' ROIs extraction ...')
-
-    ROIs = np.zeros((NROIs,ROISize,ROISize,3)).astype('int')
-    BoneROIs = np.zeros((NROIs,ROISize,ROISize)).astype('int')
-    Xs = np.zeros((NROIs,2)).astype('int')
-    Ys = np.zeros((NROIs,2)).astype('int')
-
-    for i in range(NROIs):
-        RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
-        X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
-        Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
-        BoneROI = Bone[Y1:Y2, X1:X2]
-        BVTV = BoneROI.sum() / BoneROI.size
-
-        j = 0
-        while BVTV < Parameters.Threshold and j < 100:
-            RandX, RandY = RandCoords([XCoords, YCoords], i, NROIs)
-            X1, X2 = RandX - int(ROISize / 2), RandX + int(ROISize / 2)
-            Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
-            BoneROI = Bone[Y1:Y2, X1:X2]
-            BVTV = BoneROI.sum() / BoneROI.size
-            j += 1
-            if j == 100:
-                print('No ROI found after 100 iterations')
-
-        ROIs[i] += Parameters.Image[Y1:Y2, X1:X2]
-        BoneROIs[i] += Bone[Y1:Y2, X1:X2]
-        Xs[i] += [X1, X2]
-        Ys[i] += [Y1, Y2]
-
-        if ROIsPlot:
-            Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
-            Axis.imshow(ROIs[i])
-            Axis.axis('off')
-            plt.subplots_adjust(0, 0, 1, 1)
-            plt.show()
-
-    if Plot:
-        Shape = np.array(Parameters.Image.shape[:-1]) / 1000
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Parameters.Image)
-
-        for i in range(len(Xs)):
-            Axis.plot([Xs[i,0], Xs[i,1]], [Ys[i,0], Ys[i,0]], color=(1, 0, 0))
-            Axis.plot([Xs[i,1], Xs[i,1]], [Ys[i,0], Ys[i,1]], color=(1, 0, 0))
-            Axis.plot([Xs[i,1], Xs[i,0]], [Ys[i,1], Ys[i,1]], color=(1, 0, 0))
-            Axis.plot([Xs[i,0], Xs[i,0]], [Ys[i,1], Ys[i,0]], color=(1, 0, 0))
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic,Toc)
-
-    return ROIs.astype('uint8'), BoneROIs, Xs, Ys
-
-def ExtractSkeleton(Image, Plot=False):
-    """
-    Extract skeleton of manually segmented image
-    :param Image: Numpy image dim r x c x 3
-    :param Plot: 'Full' or 'Sub' to plot intermediate results
-    :param SubArea: Indices to plot smaller image of intermediate results
-    :return: Skeleton of the segmentation
-    """
-
-    Tic = time.time()
-    print('\nExtract manual segmentation skeleton ...')
-
-    Filter1 = Image[:, :, 0] > 110
-    Filter2 = Image[:, :, 1] < 90
-    Filter3 = Image[:, :, 2] < 140
-
-    Bin = np.zeros(Filter1.shape)
-    Bin[Filter1 & Filter2 & Filter3] = 1
-
-    # Dilate to link extracted segmentation
-    Disk = morphology.disk(5)
-    BinDilate = morphology.binary_dilation(Bin, Disk)
-
-    # Skeletonize to obtain 1 pixel thickness
-    Skeleton = morphology.skeletonize(BinDilate)
-
-    if Plot:
-        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
-        Axis.imshow(Image)
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
-        Axis.imshow(Skeleton, cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
-
-    return Skeleton
 
 def FitData(DataFrame):
 
@@ -315,112 +85,134 @@ def FitData(DataFrame):
 
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
-# Read image
-Parameters = ParametersClass(2)
-ReadImage()
-
-# Segment bone and extract coordinate
-Bone = SegmentBone(Parameters.Image, Plot=True)
-Y, X = np.where(Bone)
-
-# Set ROI pixel size
-ROISize = int(round(1000 / Parameters.PixelLength))
-if np.mod(ROISize, 2) == 1:
-    ROISize = ROISize + 1
-
-# Filter positions too close to the border
-F1 = X > ROISize / 2
-F2 = X < Bone.shape[1] - ROISize / 2
-FilteredX = X[F1 & F2]
-FilteredY = Y[F1 & F2]
-
-F1 = FilteredY > ROISize / 2
-F2 = FilteredY < Bone.shape[0] - ROISize / 2
-FilteredY = FilteredY[F1 & F2]
-FilteredX = FilteredX[F1 & F2]
-
-# Extract ROIs
-N = 10
-ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=N, Plot=False)
-
-# Store in label
-Label = np.zeros(ROIs.shape[:-1],np.uint8)
-Density = []
-for i in range(N):
-    SegROI = Parameters.SegImage[Ys[i,0]:Ys[i,1], Xs[i,0]:Xs[i,1]]
-    ROISkeleton = ExtractSkeleton(SegROI, Plot=False)
-    Density.append(ROISkeleton.sum() / ROISkeleton.size)
-    Label[i] = morphology.binary_dilation(ROISkeleton,morphology.disk(2)) * 1 + 1
-PlotImage(Label[0])
-
-# Random forest
-from skimage import feature, future
-from sklearn.ensemble import RandomForestClassifier
-from functools import partial
-
-
-sigma_min = 1
-sigma_max = 16
-features_func = partial(feature.multiscale_basic_features,
-                        intensity=True, edges=False, texture=True,
-                        sigma_min=sigma_min, sigma_max=sigma_max, multichannel=True)
-ROIFeatures = []
-for i in range(N):
-    FilteredROI = filters.gaussian(ROIs[i],sigma=1, multichannel=True)
-    # PlotImage(FilteredROI)
-    ROIFeatures.append(features_func(FilteredROI))
-
-clf = RandomForestClassifier(n_estimators=50, n_jobs=-1,
-                             max_depth=10, max_samples=0.05)
-
-Labels = np.concatenate(Label,axis=0)
-Features = np.concatenate(ROIFeatures,axis=0)
-
+# Load images
 ROI = io.imread('TestROI.png')
 PlotImage(ROI)
-
-Seg_ROI = io.imread('TestROI_Seg.png')
-PlotImage(Seg_ROI)
 
 Seg_ROI = io.imread('TestROI_Forest.png')
 PlotImage(Seg_ROI)
 
+# Extract segments
 CL = Seg_ROI[:,:,0] == 255
 OC = Seg_ROI[:,:,1] == 255
 IT = Seg_ROI[:,:,2] > 220
 HC = CL * OC * IT
 PlotImage(HC)
 
+# Label segments
 Label = np.ones(HC.shape,'uint8')
-Disk = morphology.disk(5)
-Label[morphology.binary_dilation(IT,Disk)] = 2
-Disk = morphology.disk(2)
-Label[morphology.binary_dilation(OC,Disk)] = 3
-Label[morphology.binary_dilation(CL,Disk)] = 4
-Label[HC] = 5
+Label[OC] = 1
+Label[CL] = 2
+Label[HC] = 1
 PlotImage(Label)
 
-L = Seg_ROI[:,:,0] == 255
-L = morphology.binary_dilation(L,morphology.disk(2)) * 1 + 1
-F = filters.gaussian(ROI,sigma=1, multichannel=True)
-PlotImage(L[470:520,350:400])
-R = features_func(F)
+# Random forest classifier
+Channels = ['R','G','B']
+Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
+SigmaMin = 0.5
+SigmaMax = 16
+NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
+F_Names = []
+for Channel in Channels:
+    for Sigma in range(NumSigma):
+        SigmaValue = SigmaMin * 2**Sigma
+        if SigmaValue >= 1:
+            SigmaValue = int(SigmaValue)
+        for Name in Names:
+            F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
 
+
+Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
+               sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
+
+# Train model
 Tic = time.time()
-clf = future.fit_segmenter(Label,R, clf)
+clf = future.fit_segmenter(Label,Features, Classifier)
 Toc = time.time()
 PrintTime(Tic, Toc)
-result = future.predict_segmenter(R, clf)
 
-PlotImage(result==4)
+# See predictions
+Results = future.predict_segmenter(Features, Classifier)
+PlotImage(Results)
+
+# Assess model
+CM = metrics.confusion_matrix(Label.ravel(),Results.ravel(),normalize='pred')
+
+Figure, Axis = plt.subplots(1,1)
+Axis.matshow(CM, cmap='binary', alpha=0.5)
+for Row in range(CM.shape[0]):
+    for Column in range(CM.shape[1]):
+        Axis.text(x=Row,y=Column,s=round(CM[Row, Column],2), va='center', ha='center')
+Axis.xaxis.set_ticks_position('bottom')
+plt.xlabel('Predictions')
+plt.ylabel('Actuals')
+plt.show()
+
+Report = metrics.classification_report(Label.ravel(),Results.ravel())
+print(Report)
+
+# Feature importance
+FI = pd.DataFrame(Classifier.feature_importances_,columns=['Importance'])
+FI['Channel'] = [C.split()[0] for C in F_Names]
+FI['Sigma'] = [C.split()[2] for C in F_Names]
+FI['Feature'] = [C.split()[3:] for C in F_Names]
+
+Sorted = FI.sort_values(by='Importance')
+R = Sorted[Sorted['Channel'] == 'R']
+G = Sorted[Sorted['Channel'] == 'G']
+B = Sorted[Sorted['Channel'] == 'B']
+
+Figure, Axis = plt.subplots(2, 3, sharex=True, sharey=True)
+i = 0
+for Sigma in FI['Sigma'].unique():
+
+    if i < 3:
+        Row = 0
+        Column = i
+    else:
+        Row = 1
+        Column = i - 3
+
+    RF = R[R['Sigma'] == Sigma]
+    GF = G[G['Sigma'] == Sigma]
+    BF = B[B['Sigma'] == Sigma]
+
+    RS = RF.sort_values(by='Feature')
+    GS = GF.sort_values(by='Feature')
+    BS = BF.sort_values(by='Feature')
+
+    Axis[Row,Column].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1,0,0), facecolor=(0,0,0,0))
+    Axis[Row,Column].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0,1,0), facecolor=(0,0,0,0))
+    Axis[Row,Column].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0,0,1), facecolor=(0,0,0,0))
+
+    Axis[Row,Column].set_xticks(np.arange(4), ['E', 'H1', 'H2', 'I'])
+    Axis[Row,Column].set_title('Sigma = ' + Sigma)
+
+    i += 1
+plt.show()
+
+
+# Load dictionary
+with open('OptimizationData.pkl', 'rb') as f:
+    Dict = pickle.load(f)
 
 
 Data = []
-for i in range(len(ROIs)):
-    F = filters.gaussian(ROIs[i],sigma=1, multichannel=True)
-    R = features_func(F)
-    Results = future.predict_segmenter(R, clf)
-    Data.append(np.sum(Results == 4) / Results.size)
+for Key in Dict.keys():
+    for ROINumber in range(3):
+        TestROI = Dict[Key]['ROI'][ROINumber]
+        F_Test = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
+                     sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
+        R_Test = future.predict_segmenter(F_Test, Classifier)
+        Data.append(np.sum(R_Test == 2) / R_Test.size)
+
+Density = []
+for Key in Dict.keys():
+    for ROINumber in range(3):
+        TestSeg = Dict[Key]['Skeleton'][ROINumber]
+        Density.append(np.sum(TestSeg) / TestSeg.size)
+
 
 Data2Fit = pd.DataFrame({'Manual':Density,'Automatic':Data})
 Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
