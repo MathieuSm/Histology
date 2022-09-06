@@ -126,6 +126,12 @@ Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
                sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
 Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
 
+# Exclude H2
+LessFeatures = np.zeros((Features.shape[0],Features.shape[1],Features.shape[-1] - int(Features.shape[-1]/4)))
+LessFeatures[:,:,0::3] = Features[:,:,0::4]
+LessFeatures[:,:,1::3] = Features[:,:,1::4]
+LessFeatures[:,:,2::3] = Features[:,:,2::4]
+
 # Train model
 Tic = time.time()
 clf = future.fit_segmenter(Label,Features, Classifier)
@@ -149,6 +155,9 @@ plt.xlabel('Predictions')
 plt.ylabel('Actuals')
 plt.show()
 
+# Dice coefficient
+Dice(Label-1,Results-1)
+
 Report = metrics.classification_report(Label.ravel(),Results.ravel())
 print(Report)
 
@@ -167,12 +176,12 @@ Figure, Axis = plt.subplots(2, 3, sharex=True, sharey=True)
 i = 0
 for Sigma in FI['Sigma'].unique():
 
-    if i < 3:
+    if i < 2:
         Row = 0
         Column = i
     else:
         Row = 1
-        Column = i - 3
+        Column = i - 2
 
     RF = R[R['Sigma'] == Sigma]
     GF = G[G['Sigma'] == Sigma]

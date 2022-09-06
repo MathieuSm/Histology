@@ -671,15 +671,36 @@ Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([2.68075651, 6.48604414, 0.33807857, 8.56316788, 0.24789681, 0.72636055])
 
 for Key in Dict.keys():
+    Automatic = []
     for i in range(NROIs):
         Gray = color.rgb2gray(Dict[Key]['ROI'][i])
         Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
         Values = np.unique(Segmented)
         Bin = (Segmented == Values[2]) * 1
         BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
+        Automatic.append(BinDensity)
         PlotArray(Bin, 'Segment ' + str(2))
+    Dict[Key]['Automatic'] = np.array(Automatic)
 
 # Plot final results
+Values = np.zeros((3,len(Dict.keys())))
+for iKey, Key in enumerate(Dict.keys()):
+    Values[0,iKey] = np.min(Dict[Key]['Manual'])
+    Values[1,iKey] = np.mean(Dict[Key]['Manual'])
+    Values[2,iKey] = np.max(Dict[Key]['Manual'])
+Results.Manuals = Values
+
+Values = np.zeros((3,len(Dict.keys())))
+for iKey, Key in enumerate(Dict.keys()):
+    Values[0,iKey] = np.min(Dict[Key]['Automatic'])
+    Values[1,iKey] = np.mean(Dict[Key]['Automatic'])
+    Values[2,iKey] = np.max(Dict[Key]['Automatic'])
+Results.Automatics = Values
+
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals[1,:],
+                         'Automatic': Results.Automatics[1,:]})
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']], Plot=True)
+
 X = Results.Automatics.mean(axis=1)
 XError = np.abs(X - np.array([Results.Automatics.min(axis=1), Results.Automatics.max(axis=1)]))
 Y = Results.Manuals[1,:]

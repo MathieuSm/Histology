@@ -444,3 +444,10 @@ def PSO(Arguments, Plot=False, Evolution=False):
 
     return G_Best
 
+# Image processing
+def Dice(Bin1, Bin2):
+
+    Num = 2 * np.sum(Bin1 * Bin2)
+    Den = np.sum([Bin1.sum(), Bin2.sum()])
+
+    return Num / Den
