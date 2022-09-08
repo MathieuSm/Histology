@@ -40,7 +40,6 @@ class ParameterClass:
         self.N = ImageNumber
         self.Directory = Path.cwd() / 'Tests/Osteons/Sensitivity/'
         self.Threshold = Threshold
-        self.SE = 1E4
 
 class PSOArgs:
 
@@ -55,8 +54,10 @@ class PSOArgs:
 class ResultsClass:
 
     def __init__(self, NROis):
-        self.Automatics = np.zeros(NROis)
+        self.PCNN = np.zeros(NROis)
         self.MinCosts = np.ones(NROIs)
+        self.SE = 1
+
 
 def PlotArray(Array, Title, CMap='gray', ColorBar=False):
     Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
@@ -495,8 +496,8 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
 
     # Set arrays for average best segment
     NROIs = Dict['391LM']['ROI'].shape[0]
-    Dices = np.zeros((len(Keys), NROIs, 1000))
-    BinDensities = np.zeros((len(Keys), NROIs, 1000))
+    Dices = np.zeros((NROIs, len(Keys), 1000))
+    BinDensities = np.zeros((NROIs, len(Keys), 1000))
 
     Values = np.zeros((3,len(Keys)))
     for iKey, Key in enumerate(Keys):
@@ -511,9 +512,16 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
             SegValues = np.unique(Segmented)
             for Index, Value in enumerate(SegValues):
                 Bin = (Segmented == Value) * 1
-                Dices[iKey,i,Index] = DiceCoefficient(Bin, Dict[Key]['Skeleton'][i])
-                BinDensities[iKey,i,Index] = Bin.sum() / Dict[Key]['Bone'][i].sum()
+                Dices[i,iKey,Index] = DiceCoefficient(Bin, Dict[Key]['Skeleton'][i])
+                BinDensities[i,iKey,Index] = Bin.sum() / Dict[Key]['Bone'][i].sum()
     Results.Manuals = Values
+
+    # # Take individual best dice performance
+    # MaxDicesSeg = np.argmax(Dices,axis=2)
+    # PCNN_Values = np.zeros(BinDensities[:,:,0].shape)
+    # for i in range(3):
+    #     for j in range(5):
+    #         PCNN_Values[i,j] = BinDensities[i, j, MaxDicesSeg[i,j]]
 
     # Sum dices to take average better performance segment
     SumDices = np.sum(Dices,axis=(1,0))
@@ -521,14 +529,20 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
 
 
     # Built data frame with mean values and corresponding mineral densities (see pdf)
-    Data2Fit = pd.DataFrame({'Manual': Values[1,:],
-                             'Automatic': np.mean(BinDensities[:, :, MaxDicesSeg],axis=1)})
-    Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']], Plot=False)
+    Data2Fit = pd.DataFrame({'Manual': Values.mean(axis=0),
+                             'PCNN': BinDensities[:, :, MaxDicesSeg].mean(axis=0)})
+    # Data2Fit = pd.DataFrame({'Manual': Values.mean(axis=0),
+    #                          'PCNN': PCNN_Values.mean(axis=0)})
+    Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['PCNN','Manual']], Plot=False)
+
+    # if FitResults.params[1] <= 0:
+    #     SE = Results.SE
 
     # Store results
     if SE < Results.SE:
         Results.SegMin = MaxDicesSeg
         Results.Automatics = BinDensities[:, :, MaxDicesSeg]
+        # Results.Automatics = PCNN_Values.mean(axis=0)
         Results.Data = Data2Fit
         Results.Fit = FitResults
         Results.SE = SE
@@ -587,20 +601,20 @@ def FitData(DataFrame, Plot=True):
                       xycoords='axes fraction')
         Axes.set_ylabel(DataFrame.columns[1])
         Axes.set_xlabel(DataFrame.columns[0])
-        plt.subplots_adjust(left=0.15, bottom=0.15)
+        plt.subplots_adjust(left=0.2, bottom=0.15)
         plt.legend(loc='lower right')
         plt.show()
 
     # Add fitted values and residuals to data
-    DataFrame['Fitted Value'] = Y_Fit
-    DataFrame['Residuals'] = E
+    DataFrame = pd.concat([DataFrame,pd.DataFrame(Y_Fit,columns=['Fitted Value'])], axis=1)
+    DataFrame = pd.concat([DataFrame,pd.DataFrame(E,columns=['Residuals'])], axis=1)
 
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
 # Set parameters
 Medial = [0,1,2,3,4]
 NROIs = 3
-PhysicalSize = 2000
+PhysicalSize = 500
 
 Dict = {}
 for Sample in range(len(Medial)):
@@ -610,8 +624,6 @@ for Sample in range(len(Medial)):
     # Read Image
     Parameters = ParameterClass(Sample)
     ReadImage(Parameters)
-
-    Results = ResultsClass(NROIs)
 
     # Segment bone and extract coordinate
     Bone = SegmentBone(Parameters.SegImage, Plot=None)
@@ -632,7 +644,7 @@ for Sample in range(len(Medial)):
     FilteredX = FilteredX[F1 & F2]
 
     # Extract random ROI and verify validity
-    ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=True)
+    ROIs, BoneROIs, Xs, Ys = ExtractROIs(Bone, FilteredX, FilteredY, ROISize, NROIs=NROIs, Plot=None)
 
     # Extract manual segmentation and compute CM density
     Skeletons = np.zeros(BoneROIs.shape)
@@ -647,14 +659,16 @@ for Sample in range(len(Medial)):
     SampleDict['Skeleton'] = Skeletons
     SampleDict['Manual'] = Manuals
     Dict[Parameters.Name[:-1]] = SampleDict
+
+Results = ResultsClass(NROIs)
 Results.Dict = Dict
 
 
 # Run PSO for PCNN parameters
 Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-1,5]])
 Population = 20
-Cs = [0.15, 0.1]
-Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=20, STC=1E-5)
+Cs = [0.05, 0.05]
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=15, STC=1E-5)
 PSOResults = PSO.Main(Arguments, Evolution=True)
 
 # a = np.array([1])
@@ -666,21 +680,20 @@ PSOResults = PSO.Main(Arguments, Evolution=True)
 
 # Check PSO results
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
-# Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.63156391, 7.44393476, 0.0798891, 1.30944392, 0.44951109, 0.24111599])
-# Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([1.7682048, 4.192816, 0.15554972, 2.60929179, 0.57653611, 0.22790711])
-Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([2.68075651, 6.48604414, 0.33807857, 8.56316788, 0.24789681, 0.72636055])
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.78640221, 4.55145663, 0.46926488, 7.22837865, 0.19984479, 2.33408457])
 
 for Key in Dict.keys():
-    Automatic = []
+    Automatic = np.zeros(NROIs)
     for i in range(NROIs):
         Gray = color.rgb2gray(Dict[Key]['ROI'][i])
         Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
         Values = np.unique(Segmented)
-        Bin = (Segmented == Values[2]) * 1
-        BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
-        Automatic.append(BinDensity)
-        PlotArray(Bin, 'Segment ' + str(2))
-    Dict[Key]['Automatic'] = np.array(Automatic)
+        if len(Values) > Results.SegMin:
+            Bin = (Segmented == Values[Results.SegMin]) * 1
+            BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
+            Automatic[i] = BinDensity
+            PlotArray(Bin, 'Segment ' + str(Results.SegMin))
+    Dict[Key]['PCNN'] = np.array(Automatic)
 
 # Plot final results
 Values = np.zeros((3,len(Dict.keys())))
@@ -692,14 +705,14 @@ Results.Manuals = Values
 
 Values = np.zeros((3,len(Dict.keys())))
 for iKey, Key in enumerate(Dict.keys()):
-    Values[0,iKey] = np.min(Dict[Key]['Automatic'])
-    Values[1,iKey] = np.mean(Dict[Key]['Automatic'])
-    Values[2,iKey] = np.max(Dict[Key]['Automatic'])
+    Values[0,iKey] = np.min(Dict[Key]['PCNN'])
+    Values[1,iKey] = np.mean(Dict[Key]['PCNN'])
+    Values[2,iKey] = np.max(Dict[Key]['PCNN'])
 Results.Automatics = Values
 
-Data2Fit = pd.DataFrame({'Manual': Results.Manuals[1,:],
-                         'Automatic': Results.Automatics[1,:]})
-Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']], Plot=True)
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals.mean(axis=0),
+                         'PCNN': Results.Automatics.mean(axis=0)})
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['PCNN','Manual']], Plot=True)
 
 X = Results.Automatics.mean(axis=1)
 XError = np.abs(X - np.array([Results.Automatics.min(axis=1), Results.Automatics.max(axis=1)]))
@@ -749,7 +762,7 @@ Axes.annotate(r'$\sigma_{est}$ : ' + str(SE.round(5)), xy=(0.05, NoteYPos - Note
 Axes.annotate(r'$p$ : ' + str(p.round(3)), xy=(0.05, NoteYPos - NoteYShift * 3),
               xycoords='axes fraction')
 Axes.set_ylabel('Manual segmentation')
-Axes.set_xlabel('Automatic segmentation')
+Axes.set_xlabel('PCNN segmentation')
 plt.subplots_adjust(left=0.15, bottom=0.15)
 plt.legend(loc='lower right')
 plt.show()

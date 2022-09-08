@@ -200,7 +200,7 @@ def Main(Arguments, Plot=False, Evolution=False):
         PlotEvolution(Xs, G_Bests, GBVs[1:], Arguments.Ranges)
 
     # Print time elapsed
-    print('\nOptimization ended')
+    print('\nOptimization ended, final cost : ' + str(GBV))
     Toc = time.time()
     PrintTime(Tic, Toc)
 

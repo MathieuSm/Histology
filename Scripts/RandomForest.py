@@ -226,10 +226,10 @@ def FitData(DataFrame):
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
 # Load images
-ROI = io.imread('TestROI.png')[450:770,520:720]
+ROI = io.imread('TestROI.png')[470:750,135:550]
 PlotImage(ROI)
 
-Seg_ROI = io.imread('TestROI_Forest.png')[450:770,520:720]
+Seg_ROI = io.imread('TestROI_Forest.png')[470:750,135:550]
 PlotImage(Seg_ROI)
 
 # Extract segments
@@ -240,18 +240,21 @@ HC = CL * OC * IT
 PlotImage(HC)
 
 # Label segments
-Label = np.ones(HC.shape,'uint8')
-Label[OC] = 1
-Label[CL] = 2
-Label[HC] = 1
+Label = np.zeros(HC.shape,'uint8')
+Label[OC] = 0
+Label[CL] = 1
+Label[HC] = 0
 PlotImage(Label)
+
+from skimage import morphology
+Label = morphology.binary_dilation(Label,morphology.disk(1)) + 1
 
 # Random forest classifier
 Channels = ['R','G','B']
 # Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
 Names = ['I', 'E', 'H1', 'H2']
 SigmaMin = 0.5
-SigmaMax = 4
+SigmaMax = 2
 NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
 F_Names = []
 for Channel in Channels:
@@ -264,7 +267,7 @@ for Channel in Channels:
 
 for Sigma in range(NumSigma):
     SigmaValue = SigmaMin * 2 ** Sigma
-    PlotImage(filters.gaussian(ROI,SigmaValue), multichannel=True)
+    PlotImage(filters.gaussian(ROI,SigmaValue, multichannel=True))
 
 Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
                sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
@@ -280,9 +283,9 @@ for i in range(int(Features.shape[-1]/4)+1):
 # Features = MoreFeatures
 
 # Exclude H2
-LessFeatures = np.zeros((Features.shape[0],Features.shape[1],16))
-LessFeatures = Features[:,:,:32:2]
-LessNames = F_Names[:32:2]
+LessFeatures = np.zeros((Features.shape[0],Features.shape[1],24))
+LessFeatures = Features[:,:,:24]
+LessNames = F_Names[:24]
 Features = LessFeatures
 
 # Train model
@@ -305,12 +308,9 @@ Figure, Axis = plt.subplots(1,1, figsize=(5.5,4.5))
 Axis.matshow(CM3, cmap='binary', alpha=0.33)
 for Row in range(CM.shape[0]):
     for Column in range(CM.shape[1]):
-        Axis.text(x=Row, y=Column, position=(Row,Column),
-                  va='center', ha='center', s=CM[Row, Column])
-        Axis.text(x=Row, y=Column, position=(Row,Column+VSpace),
-                  va='center', ha='center', s=round(CM2[Row, Column],2), color=(0,0,1))
-        Axis.text(x=Row, y=Column, position=(Row,Column-VSpace),
-                  va='center', ha='center', s=round(CM3[Row, Column],2), color=(1,0,0))
+        Axis.text(x=Row, y=Column, position=(Row,Column), va='center', ha='center', s=CM[Row, Column])
+        Axis.text(x=Row, y=Column, position=(Row,Column+VSpace), va='center', ha='center', s=round(CM2[Row, Column],2), color=(0,0,1))
+        Axis.text(x=Row, y=Column, position=(Row,Column-VSpace), va='center', ha='center', s=round(CM3[Row, Column],2), color=(1,0,0))
 Axis.xaxis.set_ticks_position('bottom')
 Axis.set_ylim([-0.49,1.5])
 Axis.set_title('Total: ' + str(Label.size))
@@ -341,73 +341,55 @@ def PlotFeatureImportance(Classifier, F_Names):
     Sigmas = FI['Sigma'].unique()
 
     if len(Sigmas) == 1:
-
         Figure, Axis = plt.subplots(1,1)
-
         RS = R.sort_values(by='Feature')
         GS = G.sort_values(by='Feature')
         BS = B.sort_values(by='Feature')
-
         Axis.bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
         Axis.bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
         Axis.bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
-
         Axis.set_xticks(np.arange(len(Features)), Features)
 
     elif len(Sigmas) < 4:
-
         Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
         i = 0
         for Sigma in Sigmas:
-
             RF = R[R['Sigma'] == Sigma]
             GF = G[G['Sigma'] == Sigma]
             BF = B[B['Sigma'] == Sigma]
-
             RS = RF.sort_values(by='Feature')
             GS = GF.sort_values(by='Feature')
             BS = BF.sort_values(by='Feature')
-
             Axis[i].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
             Axis[i].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
             Axis[i].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
-
             Axis[i].set_xticks(np.arange(len(Features)), Features)
             Axis[i].set_title('Sigma = ' + Sigma)
-
             i += 1
 
     else:
-
         NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
         NColumns = np.ceil(len(Sigmas)/NRows).astype('int')
         Figure, Axis = plt.subplots(NRows, NColumns, sharex=True, sharey=True)
-
         Columns = np.tile(np.arange(NColumns),NRows)
         Rows = np.repeat(np.arange(NRows),NColumns)
-
         i = 0
         for Sigma in Sigmas:
-
             Row = Rows[i]
             Column = Columns[i]
-
             RF = R[R['Sigma'] == Sigma]
             GF = G[G['Sigma'] == Sigma]
             BF = B[B['Sigma'] == Sigma]
-
             RS = RF.sort_values(by='Feature')
             GS = GF.sort_values(by='Feature')
             BS = BF.sort_values(by='Feature')
-
             Axis[Row,Column].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1,0,0), facecolor=(0,0,0,0))
             Axis[Row,Column].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0,1,0), facecolor=(0,0,0,0))
             Axis[Row,Column].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0,0,1), facecolor=(0,0,0,0))
-
             Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
             Axis[Row,Column].set_title('Sigma = ' + Sigma)
-
             i += 1
+
     plt.show()
 PlotFeatureImportance(Classifier, LessNames)
 
@@ -416,37 +398,40 @@ with open('OptimizationData.pkl', 'rb') as f:
     Dict = pickle.load(f)
 
 
-Data = []
+Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
     for ROINumber in range(3):
         TestROI = Dict[Key]['ROI'][ROINumber]
         F_Test = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
                      sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
         R_Test = future.predict_segmenter(F_Test, Classifier)
-        Data.append(np.sum(R_Test == 2) / R_Test.size)
+        Data.loc[ROINumber,Key] = np.sum(R_Test == 2) / R_Test.size
 
-Density = []
+Density = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
     for ROINumber in range(3):
         TestSeg = Dict[Key]['Skeleton'][ROINumber]
-        Density.append(np.sum(TestSeg) / TestSeg.size)
+        Density.loc[ROINumber,Key] = np.sum(TestSeg) / TestSeg.size
 
 
-Data2Fit = pd.DataFrame({'Manual':Density,'Automatic':Data})
+Data2Fit = pd.DataFrame({'Manual':Density.mean(axis=0),'Automatic':Data.mean(axis=0)})
 Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
-Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']])
+Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']].astype('float'))
 
 
 Figure, Axis = plt.subplots(1,1)
 Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
 plt.show()
 
-FitData(Data2Fit.drop([3]).reset_index(drop=True))
+FitData(Data2Fit.drop([4,7,11]).reset_index(drop=True))
 FitData(Data2Fit.drop([1,4,5,6,9]).reset_index(drop=True))
 
 
-ROINumber = 9
-PlotImage(ROIs[ROINumber])
+TestROI = Dict['437RM']['ROI'][0]
+TestROI = Dict['418RM']['ROI'][1]
+TestROI = Dict['418LM']['ROI'][2]
+PlotImage(TestROI)
+Histogram(TestROI)
 
 SegROI = Parameters.SegImage[Ys[ROINumber, 0]:Ys[ROINumber, 1], Xs[ROINumber, 0]:Xs[ROINumber, 1]]
 PlotImage(SegROI)
@@ -457,16 +442,18 @@ Results = future.predict_segmenter(R, clf)
 PlotImage(Results == 4)
 
 B1 = []
+B1.append(TestROI)
 for i in [1,4,5,6,9]:
     SegROI = Parameters.SegImage[Ys[i, 0]:Ys[i, 1], Xs[i, 0]:Xs[i, 1]]
     B1.append(SegROI)
-HistoError(B1,ylim=0.015)
+HistoError(B1,ylim=0.02)
 
 B2 = []
+B2.append(Dict['391LM']['ROI'][2])
 for i in [0,2,3,7,8]:
     SegROI = Parameters.SegImage[Ys[i, 0]:Ys[i, 1], Xs[i, 0]:Xs[i, 1]]
     B2.append(SegROI)
-HistoError(B2,ylim=0.015)
+HistoError(B2,ylim=0.02)
 
 B1 = np.concatenate(B1,axis=0)
 B2 = np.concatenate(B2,axis=0)
