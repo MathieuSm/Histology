@@ -12,17 +12,157 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn import metrics
-from skimage import io, future
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
+from skimage import io, future, filters
 from scipy.stats.distributions import t
 from sklearn.ensemble import RandomForestClassifier
 from skimage.feature import multiscale_basic_features as mbf
 
+plt.rc('font', size=12)
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 from Utilities import *
 
+def GetNeighbours(Array2D, N=1, Print=False):
+    """
+    Function used to get values of the neighbourhood pixels (based on numpy.roll)
+    :param Array2D: Row x Column numpy array
+    :param N: Number of neighbours offset (1 or 2 usually)
+    :return: Neighbourhood pixels values
+    """
+
+    # Define a map for the neighbour index computation
+    Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
+
+    # number of neighbours
+    Neighbours = (2*N+1)**2 - 1
+
+    if len(Array2D.shape) > 2:
+        YSize, XSize = Array2D.shape[:-1]
+        Dimension = Array2D.shape[-1]
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours, Dimension))
+
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
+    else:
+        YSize, XSize = Array2D.shape
+        Neighbourhood = np.zeros((YSize, XSize, Neighbours))
+
+        # Pad the array to avoid border effects
+        Array2D = np.pad(Array2D, 1, 'symmetric')
+
+    if Print:
+        print('\nGet neighbours ...')
+        Tic = time.time()
+
+    i = 0
+    for Shift in [-1, 1]:
+        for Axis in [0, 1]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
+            i += 1
+
+    for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+        for Axis in [(0, 1)]:
+            Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1,1:-1]
+            i += 1
+
+    if N == 2:
+
+        # Pad again the array to avoid border effects
+        if len(Array2D.shape) > 2:
+            Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
+        else:
+            Array2D = np.pad(Array2D, 1, 'symmetric')
+
+        for Shift in [-2, 2]:
+            for Axis in [0, 1]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-2, -1), (2, -1), (-2, 1), (2, 1)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+        for Shift in [(-1, -2), (1, -2), (-1, 2), (1, 2)]:
+            for Axis in [(0, 1)]:
+                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2,2:-2]
+                i += 1
+
+    if Print:
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+    return Neighbourhood, Map
+
+def NormalizeValues(Image):
+    """
+    Normalize image values, used in PCNN for easier parameters handling
+    :param Image: Original grayscale image
+    :return: N_Image: Image with 0,1 normalized values
+    """
+
+    N_Image = (Image - Image.min()) / (Image.max() - Image.min())
+
+    return N_Image
+
+def SPCNN(Image,Beta=2,Delta=1/255,VT=100):
+
+    """
+    Segment image using simplified PCNN, single neuron firing and fast linking implementation
+    Based on:
+    Zhan, K., Shi, J., Wang, H. et al.
+    Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+    Arch Computat Methods Eng 24, 573–588 (2017).
+    https://doi.org/10.1007/s11831-016-9182-3
+
+    :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+    :param Delta: Linear decay factor for threshold level
+    :param VT: Dynamic threshold amplitude
+    :param Nl_max: Max number of iteration for fast linking
+    :return: H: Image histogram in numpy array
+    """
+
+    Tic = time.time()
+    print('\nImage segmentation...')
+
+    # Initialize parameters
+    S = NormalizeValues(Image)
+    Rows, Columns = S.shape
+    Y = np.zeros((Rows, Columns))
+    T = np.zeros((Rows, Columns))
+    W = np.ones((Rows, Columns, 8)) * np.array([1,1,1,1,0.5,0.5,0.5,0.5])
+    Theta = np.ones((Rows, Columns))
+
+    FiredNumber = 0
+    N = 0
+
+    # Perform segmentation
+    while FiredNumber < S.size:
+
+        N += 1
+        F = S
+        L = np.sum(GetNeighbours(Y)[0] * W, axis=2)
+        Theta = Theta - Delta + VT * Y
+        U = F * (1 + Beta * L)
+        Y = (U > Theta) * 1
+
+        T = T + N * Y
+        FiredNumber = FiredNumber + sum(sum(Y))
+
+    Output = 1 - NormalizeValues(T)
+
+    # Print time elapsed
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Output
 
 def FitData(DataFrame):
 
@@ -86,10 +226,10 @@ def FitData(DataFrame):
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
 # Load images
-ROI = io.imread('TestROI.png')
+ROI = io.imread('TestROI.png')[450:770,520:720]
 PlotImage(ROI)
 
-Seg_ROI = io.imread('TestROI_Forest.png')
+Seg_ROI = io.imread('TestROI_Forest.png')[450:770,520:720]
 PlotImage(Seg_ROI)
 
 # Extract segments
@@ -108,9 +248,10 @@ PlotImage(Label)
 
 # Random forest classifier
 Channels = ['R','G','B']
-Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
+# Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
+Names = ['I', 'E', 'H1', 'H2']
 SigmaMin = 0.5
-SigmaMax = 16
+SigmaMax = 4
 NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
 F_Names = []
 for Channel in Channels:
@@ -121,16 +262,28 @@ for Channel in Channels:
         for Name in Names:
             F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
 
+for Sigma in range(NumSigma):
+    SigmaValue = SigmaMin * 2 ** Sigma
+    PlotImage(filters.gaussian(ROI,SigmaValue), multichannel=True)
 
 Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
                sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
 Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
 
+for i in range(int(Features.shape[-1]/4)+1):
+    PlotImage(Features[:,:,i])
+
+# # Add PCNN features
+# MoreFeatures = np.zeros((Features.shape[0],Features.shape[1],Features.shape[2] + 1))
+# MoreFeatures[:,:,:-1] = Features
+# MoreFeatures[:,:,-1] = PCNN_ROI
+# Features = MoreFeatures
+
 # Exclude H2
-LessFeatures = np.zeros((Features.shape[0],Features.shape[1],Features.shape[-1] - int(Features.shape[-1]/4)))
-LessFeatures[:,:,0::3] = Features[:,:,0::4]
-LessFeatures[:,:,1::3] = Features[:,:,1::4]
-LessFeatures[:,:,2::3] = Features[:,:,2::4]
+LessFeatures = np.zeros((Features.shape[0],Features.shape[1],16))
+LessFeatures = Features[:,:,:32:2]
+LessNames = F_Names[:32:2]
+Features = LessFeatures
 
 # Train model
 Tic = time.time()
@@ -143,16 +296,26 @@ Results = future.predict_segmenter(Features, Classifier)
 PlotImage(Results)
 
 # Assess model
-CM = metrics.confusion_matrix(Label.ravel(),Results.ravel(),normalize='pred')
+CM = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize=None)
+CM2 = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize='true')
+CM3 = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize='pred')
+VSpace = 0.15
 
-Figure, Axis = plt.subplots(1,1)
-Axis.matshow(CM, cmap='binary', alpha=0.5)
+Figure, Axis = plt.subplots(1,1, figsize=(5.5,4.5))
+Axis.matshow(CM3, cmap='binary', alpha=0.33)
 for Row in range(CM.shape[0]):
     for Column in range(CM.shape[1]):
-        Axis.text(x=Row,y=Column,s=round(CM[Row, Column],2), va='center', ha='center')
+        Axis.text(x=Row, y=Column, position=(Row,Column),
+                  va='center', ha='center', s=CM[Row, Column])
+        Axis.text(x=Row, y=Column, position=(Row,Column+VSpace),
+                  va='center', ha='center', s=round(CM2[Row, Column],2), color=(0,0,1))
+        Axis.text(x=Row, y=Column, position=(Row,Column-VSpace),
+                  va='center', ha='center', s=round(CM3[Row, Column],2), color=(1,0,0))
 Axis.xaxis.set_ticks_position('bottom')
-plt.xlabel('Predictions')
-plt.ylabel('Actuals')
+Axis.set_ylim([-0.49,1.5])
+Axis.set_title('Total: ' + str(Label.size))
+Axis.set_xlabel('Ground Truth',color=(0,0,1))
+Axis.set_ylabel('Predictions',color=(1,0,0))
 plt.show()
 
 # Dice coefficient
@@ -162,45 +325,91 @@ Report = metrics.classification_report(Label.ravel(),Results.ravel())
 print(Report)
 
 # Feature importance
-FI = pd.DataFrame(Classifier.feature_importances_,columns=['Importance'])
-FI['Channel'] = [C.split()[0] for C in F_Names]
-FI['Sigma'] = [C.split()[2] for C in F_Names]
-FI['Feature'] = [C.split()[3:] for C in F_Names]
+def PlotFeatureImportance(Classifier, F_Names):
 
-Sorted = FI.sort_values(by='Importance')
-R = Sorted[Sorted['Channel'] == 'R']
-G = Sorted[Sorted['Channel'] == 'G']
-B = Sorted[Sorted['Channel'] == 'B']
+    FI = pd.DataFrame(Classifier.feature_importances_, columns=['Importance'])
+    FI['Channel'] = [C.split()[0] for C in F_Names]
+    FI['Sigma'] = [C.split()[2] for C in F_Names]
+    FI['Feature'] = [C.split()[3] for C in F_Names]
+    Features = FI['Feature'].unique()
 
-Figure, Axis = plt.subplots(2, 3, sharex=True, sharey=True)
-i = 0
-for Sigma in FI['Sigma'].unique():
+    Sorted = FI.sort_values(by='Importance')
+    R = Sorted[Sorted['Channel'] == 'R']
+    G = Sorted[Sorted['Channel'] == 'G']
+    B = Sorted[Sorted['Channel'] == 'B']
 
-    if i < 2:
-        Row = 0
-        Column = i
+    Sigmas = FI['Sigma'].unique()
+
+    if len(Sigmas) == 1:
+
+        Figure, Axis = plt.subplots(1,1)
+
+        RS = R.sort_values(by='Feature')
+        GS = G.sort_values(by='Feature')
+        BS = B.sort_values(by='Feature')
+
+        Axis.bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
+        Axis.bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
+        Axis.bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
+
+        Axis.set_xticks(np.arange(len(Features)), Features)
+
+    elif len(Sigmas) < 4:
+
+        Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
+        i = 0
+        for Sigma in Sigmas:
+
+            RF = R[R['Sigma'] == Sigma]
+            GF = G[G['Sigma'] == Sigma]
+            BF = B[B['Sigma'] == Sigma]
+
+            RS = RF.sort_values(by='Feature')
+            GS = GF.sort_values(by='Feature')
+            BS = BF.sort_values(by='Feature')
+
+            Axis[i].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
+            Axis[i].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
+            Axis[i].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
+
+            Axis[i].set_xticks(np.arange(len(Features)), Features)
+            Axis[i].set_title('Sigma = ' + Sigma)
+
+            i += 1
+
     else:
-        Row = 1
-        Column = i - 2
 
-    RF = R[R['Sigma'] == Sigma]
-    GF = G[G['Sigma'] == Sigma]
-    BF = B[B['Sigma'] == Sigma]
+        NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
+        NColumns = np.ceil(len(Sigmas)/NRows).astype('int')
+        Figure, Axis = plt.subplots(NRows, NColumns, sharex=True, sharey=True)
 
-    RS = RF.sort_values(by='Feature')
-    GS = GF.sort_values(by='Feature')
-    BS = BF.sort_values(by='Feature')
+        Columns = np.tile(np.arange(NColumns),NRows)
+        Rows = np.repeat(np.arange(NRows),NColumns)
 
-    Axis[Row,Column].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1,0,0), facecolor=(0,0,0,0))
-    Axis[Row,Column].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0,1,0), facecolor=(0,0,0,0))
-    Axis[Row,Column].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0,0,1), facecolor=(0,0,0,0))
+        i = 0
+        for Sigma in Sigmas:
 
-    Axis[Row,Column].set_xticks(np.arange(4), ['E', 'H1', 'H2', 'I'])
-    Axis[Row,Column].set_title('Sigma = ' + Sigma)
+            Row = Rows[i]
+            Column = Columns[i]
 
-    i += 1
-plt.show()
+            RF = R[R['Sigma'] == Sigma]
+            GF = G[G['Sigma'] == Sigma]
+            BF = B[B['Sigma'] == Sigma]
 
+            RS = RF.sort_values(by='Feature')
+            GS = GF.sort_values(by='Feature')
+            BS = BF.sort_values(by='Feature')
+
+            Axis[Row,Column].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1,0,0), facecolor=(0,0,0,0))
+            Axis[Row,Column].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0,1,0), facecolor=(0,0,0,0))
+            Axis[Row,Column].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0,0,1), facecolor=(0,0,0,0))
+
+            Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
+            Axis[Row,Column].set_title('Sigma = ' + Sigma)
+
+            i += 1
+    plt.show()
+PlotFeatureImportance(Classifier, LessNames)
 
 # Load dictionary
 with open('OptimizationData.pkl', 'rb') as f:
