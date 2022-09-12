@@ -57,6 +57,7 @@ class ResultsClass:
         self.PCNN = np.zeros(NROis)
         self.MinCosts = np.ones(NROIs)
         self.SE = 1
+        self.SegMin = 2
 
 
 def PlotArray(Array, Title, CMap='gray', ColorBar=False):
@@ -663,12 +664,11 @@ for Sample in range(len(Medial)):
 Results = ResultsClass(NROIs)
 Results.Dict = Dict
 
-
 # Run PSO for PCNN parameters
 Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-1,5]])
-Population = 20
+Population = 25
 Cs = [0.05, 0.05]
-Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=15, STC=1E-5)
+Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=10, STC=1E-5)
 PSOResults = PSO.Main(Arguments, Evolution=True)
 
 # a = np.array([1])
@@ -710,8 +710,8 @@ for iKey, Key in enumerate(Dict.keys()):
     Values[2,iKey] = np.max(Dict[Key]['PCNN'])
 Results.Automatics = Values
 
-Data2Fit = pd.DataFrame({'Manual': Results.Manuals.mean(axis=0),
-                         'PCNN': Results.Automatics.mean(axis=0)})
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals[1,:],
+                         'PCNN': Results.Automatics[1,:]})
 Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['PCNN','Manual']], Plot=True)
 
 X = Results.Automatics.mean(axis=1)

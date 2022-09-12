@@ -14,8 +14,8 @@ from pathlib import Path
 from sklearn import metrics
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
-from skimage import io, future, filters
 from scipy.stats.distributions import t
+from skimage import io, future, filters, exposure
 from sklearn.ensemble import RandomForestClassifier
 from skimage.feature import multiscale_basic_features as mbf
 
@@ -225,9 +225,43 @@ def FitData(DataFrame):
 
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
+# Load dictionary
+with open('OptimizationData.pkl', 'rb') as f:
+    Dict = pickle.load(f)
+
+# Compute mean ROI histogram
+nBins = 255
+Histograms = np.zeros((len(Dict.keys()),3,3,nBins))
+for RGB in range(3):
+    for nKey, Key in enumerate(Dict.keys()):
+        for nROI in range(3):
+            ROI = Dict[Key]['ROI'][nROI]
+            Hists, Bins = np.histogram(ROI[:, :, RGB], density=False, bins=nBins, range=(0, 255))
+            Histograms[nKey,nROI,RGB] = Hists
+MeanHist = np.mean(Histograms,axis=(0,1)).round().astype('int')
+
+Figure, Axis = plt.subplots(1,1)
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[0], edgecolor=(1,0,0), color=(0,0,0,0), width=Bins[1])
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[1], edgecolor=(0,1,0), color=(0,0,0,0), width=Bins[1])
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[2], edgecolor=(0,0,1), color=(0,0,0,0), width=Bins[1])
+plt.show()
+
+Start = 0
+Stop = 0
+Reference = np.ones(ROI.shape,'int').ravel()
+for i, nPixels in enumerate(MeanHist.ravel()):
+    Stop += nPixels
+    Reference[Start:Stop] = np.tile(Bins,3)[i].astype('int')
+    Start = Stop
+Reference = np.reshape(Reference,ROI.shape,order='F')
+PlotImage(Reference)
+
+
 # Load images
 ROI = io.imread('TestROI.png')[470:750,135:550]
+ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
 PlotImage(ROI)
+
 
 Seg_ROI = io.imread('TestROI_Forest.png')[470:750,135:550]
 PlotImage(Seg_ROI)
@@ -244,17 +278,26 @@ Label = np.zeros(HC.shape,'uint8')
 Label[OC] = 0
 Label[CL] = 1
 Label[HC] = 0
-PlotImage(Label)
 
 from skimage import morphology
-Label = morphology.binary_dilation(Label,morphology.disk(1)) + 1
+Label = morphology.binary_dilation(Label,morphology.disk(1))
+Label = morphology.binary_dilation(Label,morphology.disk(3))*1 + Label*1
+PlotImage(Label)
+
+# Select random pixels
+Coordinates = np.argwhere(~Label)
+np.random.shuffle(Coordinates)
+Pixels = Coordinates[:Label.sum()]
+Label = Label * 1
+Label[Pixels[:,0],Pixels[:,1]] = 2
+PlotImage(Label)
 
 # Random forest classifier
 Channels = ['R','G','B']
 # Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
 Names = ['I', 'E', 'H1', 'H2']
 SigmaMin = 0.5
-SigmaMax = 2
+SigmaMax = 16
 NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
 F_Names = []
 for Channel in Channels:
@@ -312,7 +355,7 @@ for Row in range(CM.shape[0]):
         Axis.text(x=Row, y=Column, position=(Row,Column+VSpace), va='center', ha='center', s=round(CM2[Row, Column],2), color=(0,0,1))
         Axis.text(x=Row, y=Column, position=(Row,Column-VSpace), va='center', ha='center', s=round(CM3[Row, Column],2), color=(1,0,0))
 Axis.xaxis.set_ticks_position('bottom')
-Axis.set_ylim([-0.49,1.5])
+Axis.set_ylim([-0.49,CM.shape[0]-0.5])
 Axis.set_title('Total: ' + str(Label.size))
 Axis.set_xlabel('Ground Truth',color=(0,0,1))
 Axis.set_ylabel('Predictions',color=(1,0,0))
@@ -391,11 +434,9 @@ def PlotFeatureImportance(Classifier, F_Names):
             i += 1
 
     plt.show()
-PlotFeatureImportance(Classifier, LessNames)
+PlotFeatureImportance(Classifier, F_Names)
 
-# Load dictionary
-with open('OptimizationData.pkl', 'rb') as f:
-    Dict = pickle.load(f)
+
 
 
 Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
