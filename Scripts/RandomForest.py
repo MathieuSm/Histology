@@ -275,19 +275,20 @@ PlotImage(HC)
 
 # Label segments
 Label = np.zeros(HC.shape,'uint8')
-Label[OC] = 0
+Label[OC] = 3
 Label[CL] = 1
-Label[HC] = 0
+Label[HC] = 4
+Ticks = ['CL','IT','OC','HC']
 
 from skimage import morphology
-Label = morphology.binary_dilation(Label,morphology.disk(1))
+Label = morphology.binary_dilation(Label,morphology.disk(1)) * 1
 Label = morphology.binary_dilation(Label,morphology.disk(3))*1 + Label*1
 PlotImage(Label)
 
 # Select random pixels
 Coordinates = np.argwhere(~Label)
 np.random.shuffle(Coordinates)
-Pixels = Coordinates[:Label.sum()]
+Pixels = Coordinates[:np.bincount(Label.ravel())[-1]]
 Label = Label * 1
 Label[Pixels[:,0],Pixels[:,1]] = 2
 PlotImage(Label)
@@ -296,8 +297,8 @@ PlotImage(Label)
 Channels = ['R','G','B']
 # Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
 Names = ['I', 'E', 'H1', 'H2']
-SigmaMin = 0.5
-SigmaMax = 16
+SigmaMin = 4
+SigmaMax = 32
 NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
 F_Names = []
 for Channel in Channels:
@@ -308,13 +309,39 @@ for Channel in Channels:
         for Name in Names:
             F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
 
-for Sigma in range(NumSigma):
-    SigmaValue = SigmaMin * 2 ** Sigma
-    PlotImage(filters.gaussian(ROI,SigmaValue, multichannel=True))
+# for Sigma in range(NumSigma):
+#     SigmaValue = SigmaMin * 2 ** Sigma
+#     PlotImage(filters.gaussian(ROI,SigmaValue, multichannel=True))
+#
+for iKey, Key in enumerate(Dict.keys()):
+    for ROINumber in range(Dict[Key]['ROI'].shape[0]):
+        ROI = Dict[Key]['ROI'][ROINumber]
+        ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
+        ROI_Features = mbf(ROI, multichannel=True, intensity=True, edges=True, texture=True,
+                           sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
+
+        Skeleton = Dict[Key]['Skeleton'][ROINumber]
+        ROI_Label = morphology.binary_dilation(Skeleton, morphology.disk(1)) * 2
+        Coordinates = np.argwhere(~ROI_Label)
+        np.random.shuffle(Coordinates)
+        Pixels = Coordinates[:np.bincount(ROI_Label.ravel())[-1]]
+        ROI_Label[Pixels[:, 0], Pixels[:, 1]] = 1
+
+        # if iKey == 0 and ROINumber == 0:
+        #     Features = ROI_Features[ROI_Label > 0]
+        #     Label = ROI_Label[ROI_Label > 0]
+        # else:
+        if iKey == 0 and ROINumber == 0:
+            Features = Features[Label > 0]
+            Label = Label[Label > 0]
+
+        Features = np.vstack([Features,ROI_Features[ROI_Label > 0]])
+        Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
 
 Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
                sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
 Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2)
 
 for i in range(int(Features.shape[-1]/4)+1):
     PlotImage(Features[:,:,i])
@@ -333,7 +360,7 @@ Features = LessFeatures
 
 # Train model
 Tic = time.time()
-clf = future.fit_segmenter(Label,Features, Classifier)
+clf = future.fit_segmenter(Label[Label > 0],Features[Label > 0], Classifier)
 Toc = time.time()
 PrintTime(Tic, Toc)
 
@@ -342,9 +369,9 @@ Results = future.predict_segmenter(Features, Classifier)
 PlotImage(Results)
 
 # Assess model
-CM = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize=None)
-CM2 = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize='true')
-CM3 = metrics.confusion_matrix(Label.ravel()-1,Results.ravel()-1,normalize='pred')
+CM = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize=None)
+CM2 = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize='true')
+CM3 = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize='pred')
 VSpace = 0.15
 
 Figure, Axis = plt.subplots(1,1, figsize=(5.5,4.5))
@@ -355,8 +382,10 @@ for Row in range(CM.shape[0]):
         Axis.text(x=Row, y=Column, position=(Row,Column+VSpace), va='center', ha='center', s=round(CM2[Row, Column],2), color=(0,0,1))
         Axis.text(x=Row, y=Column, position=(Row,Column-VSpace), va='center', ha='center', s=round(CM3[Row, Column],2), color=(1,0,0))
 Axis.xaxis.set_ticks_position('bottom')
+Axis.set_xticks(np.arange(len(Ticks)),Ticks)
+Axis.set_yticks(np.arange(len(Ticks)),Ticks)
 Axis.set_ylim([-0.49,CM.shape[0]-0.5])
-Axis.set_title('Total: ' + str(Label.size))
+Axis.set_title('Total: ' + str(Label[Label > 0].size))
 Axis.set_xlabel('Ground Truth',color=(0,0,1))
 Axis.set_ylabel('Predictions',color=(1,0,0))
 plt.show()
@@ -364,7 +393,7 @@ plt.show()
 # Dice coefficient
 Dice(Label-1,Results-1)
 
-Report = metrics.classification_report(Label.ravel(),Results.ravel())
+Report = metrics.classification_report(Label[Label > 0].ravel(),Results[Label > 0].ravel())
 print(Report)
 
 # Feature importance
@@ -434,19 +463,34 @@ def PlotFeatureImportance(Classifier, F_Names):
             i += 1
 
     plt.show()
-PlotFeatureImportance(Classifier, F_Names)
 
+    return FI
+FI = PlotFeatureImportance(Classifier, F_Names)
 
+Threshold = 0.02
+Mask = FI['Importance'] > Threshold
+
+# Train model again
+Tic = time.time()
+clf = future.fit_segmenter(Label[Label > 0],Features[Label > 0][:,Mask], Classifier)
+Toc = time.time()
+PrintTime(Tic, Toc)
+
+# See new predictions
+Results = future.predict_segmenter(Features[:,Mask], Classifier)
 
 
 Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
     for ROINumber in range(3):
         TestROI = Dict[Key]['ROI'][ROINumber]
+        TestROI = np.round(exposure.match_histograms(TestROI,Reference)).astype('uint8')
         F_Test = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
                      sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
         R_Test = future.predict_segmenter(F_Test, Classifier)
-        Data.loc[ROINumber,Key] = np.sum(R_Test == 2) / R_Test.size
+        # PlotImage(R_Test == 1)
+        # PlotImage(Dict[Key]['Skeleton'][ROINumber])
+        Data.loc[ROINumber,Key] = np.sum(R_Test == 1) / R_Test.size
 
 Density = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
@@ -456,7 +500,8 @@ for Key in Dict.keys():
 
 
 Data2Fit = pd.DataFrame({'Manual':Density.mean(axis=0),'Automatic':Data.mean(axis=0)})
-Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
+Data2Fit = pd.DataFrame({'Manual':Density.values.ravel(),'Automatic':Data.values.ravel()})
+# Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
 Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']].astype('float'))
 
 

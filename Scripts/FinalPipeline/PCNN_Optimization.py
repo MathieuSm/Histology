@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import correlate
 import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
-from skimage import morphology, measure, color
+from skimage import morphology, measure, color, exposure
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 
@@ -500,11 +500,9 @@ def Function2Optimize(Parameters=np.array([2., 1., 0.5, 1., 0.5, 0.5])):
     Dices = np.zeros((NROIs, len(Keys), 1000))
     BinDensities = np.zeros((NROIs, len(Keys), 1000))
 
-    Values = np.zeros((3,len(Keys)))
+    Values = np.zeros((NROIs,len(Keys)))
     for iKey, Key in enumerate(Keys):
-        Values[0,iKey] = np.min(Dict[Key]['Manual'])
-        Values[1,iKey] = np.mean(Dict[Key]['Manual'])
-        Values[2,iKey] = np.max(Dict[Key]['Manual'])
+        Values[:,iKey] = Dict[Key]['Manual']
 
         for i in range(NROIs):
             Gray = color.rgb2gray(Dict[Key]['ROI'][i])
@@ -615,7 +613,7 @@ def FitData(DataFrame, Plot=True):
 # Set parameters
 Medial = [0,1,2,3,4]
 NROIs = 3
-PhysicalSize = 500
+PhysicalSize = 2000
 
 Dict = {}
 for Sample in range(len(Medial)):
@@ -664,10 +662,43 @@ for Sample in range(len(Medial)):
 Results = ResultsClass(NROIs)
 Results.Dict = Dict
 
+# Compute mean ROI histogram
+nBins = 255
+Histograms = np.zeros((len(Dict.keys()),3,3,nBins))
+for RGB in range(3):
+    for nKey, Key in enumerate(Dict.keys()):
+        for nROI in range(3):
+            ROI = Dict[Key]['ROI'][nROI]
+            Hists, Bins = np.histogram(ROI[:, :, RGB], density=False, bins=nBins, range=(0, 255))
+            Histograms[nKey,nROI,RGB] = Hists
+MeanHist = np.mean(Histograms,axis=(0,1)).round().astype('int')
+
+Figure, Axis = plt.subplots(1,1)
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[0], edgecolor=(1,0,0), color=(0,0,0,0), width=Bins[1])
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[1], edgecolor=(0,1,0), color=(0,0,0,0), width=Bins[1])
+Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[2], edgecolor=(0,0,1), color=(0,0,0,0), width=Bins[1])
+plt.show()
+
+Start = 0
+Stop = 0
+Reference = np.ones(ROI.shape,'int').ravel()
+for i, nPixels in enumerate(MeanHist.ravel()):
+    Stop += nPixels
+    Reference[Start:Stop] = np.tile(Bins,3)[i].astype('int')
+    Start = Stop
+Reference = np.reshape(Reference,ROI.shape,order='F')
+PlotArray(Reference,'Reference')
+
+for Key in Dict.keys():
+    for nROI in range(NROIs):
+        ROI = Dict[Key]['ROI'][nROI]
+        ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
+        Results.Dict[Key]['ROI'][nROI] = ROI
+
 # Run PSO for PCNN parameters
 Ranges = np.array([[0,4],[1E-2,10],[1E-2,1],[1E-2,10],[1E-2,1],[1E-1,5]])
-Population = 25
-Cs = [0.05, 0.05]
+Population = 50
+Cs = [0.5, 0.1]
 Arguments = PSOArgs(Function2Optimize, Ranges, Population, Cs, MaxIt=10, STC=1E-5)
 PSOResults = PSO.Main(Arguments, Evolution=True)
 
@@ -681,6 +712,10 @@ PSOResults = PSO.Main(Arguments, Evolution=True)
 # Check PSO results
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = PSOResults
 Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.78640221, 4.55145663, 0.46926488, 7.22837865, 0.19984479, 2.33408457])
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.36657598, 2.71302182, 0.89146428, 0.01, 0.61970243, 0.1113785])
+Results.SegMin = 12
+Beta, AlphaF, VF, AlphaL, VL, AlphaT = np.array([0.92248269, 9.40340224, 0.39982255, 0.83549087, 0.94182256, 0.30280017])
+Results.SegMin = 5
 
 for Key in Dict.keys():
     Automatic = np.zeros(NROIs)
@@ -696,22 +731,32 @@ for Key in Dict.keys():
     Dict[Key]['PCNN'] = np.array(Automatic)
 
 # Plot final results
-Values = np.zeros((3,len(Dict.keys())))
+Values = np.zeros((NROIs,len(Dict.keys())))
 for iKey, Key in enumerate(Dict.keys()):
     Values[0,iKey] = np.min(Dict[Key]['Manual'])
     Values[1,iKey] = np.mean(Dict[Key]['Manual'])
     Values[2,iKey] = np.max(Dict[Key]['Manual'])
 Results.Manuals = Values
 
-Values = np.zeros((3,len(Dict.keys())))
+Values = np.zeros((NROIs,len(Dict.keys())))
 for iKey, Key in enumerate(Dict.keys()):
     Values[0,iKey] = np.min(Dict[Key]['PCNN'])
     Values[1,iKey] = np.mean(Dict[Key]['PCNN'])
     Values[2,iKey] = np.max(Dict[Key]['PCNN'])
 Results.Automatics = Values
 
-Data2Fit = pd.DataFrame({'Manual': Results.Manuals[1,:],
-                         'PCNN': Results.Automatics[1,:]})
+Values = np.zeros((NROIs,len(Dict.keys())))
+for iKey, Key in enumerate(Dict.keys()):
+    Values[:,iKey] = Dict[Key]['Manual']
+Results.Manuals = Values
+
+Values = np.zeros((NROIs,len(Dict.keys())))
+for iKey, Key in enumerate(Dict.keys()):
+    Values[:,iKey] = Dict[Key]['PCNN']
+Results.Automatics = Values
+
+Data2Fit = pd.DataFrame({'Manual': Results.Manuals.ravel(),
+                         'PCNN': 0.22-Results.Automatics.ravel()})
 Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['PCNN','Manual']], Plot=True)
 
 X = Results.Automatics.mean(axis=1)
