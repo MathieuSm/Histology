@@ -7,9 +7,9 @@ import pandas as pd
 import SimpleITK as sitk
 from pathlib import Path
 import matplotlib.pyplot as plt
-from scipy.ndimage import correlate
 import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
+from matplotlib.colors import LinearSegmentedColormap
 from skimage import morphology, measure, color, exposure
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
@@ -72,6 +72,30 @@ def PlotArray(Array, Title, CMap='gray', ColorBar=False):
     plt.close(Figure)
 
     return
+
+def PlotOverlay(ROI,Seg, Save=False, FileName=None):
+
+    CMapDict = {'red':((0.0, 0.0, 0.0),
+                       (0.5, 1.0, 1.0),
+                       (1.0, 1.0, 1.0)),
+                'green': ((0.0, 0.0, 0.0),
+                          (1.0, 0.0, 0.0)),
+                'blue': ((0.0, 0.0, 0.0),
+                         (1.0, 0.0, 0.0)),
+                'alpha': ((0.0, 0.0, 0.0),
+                          (1.0, 1.0, 1.0))}
+    CMap = LinearSegmentedColormap('MyMap',CMapDict)
+
+    Figure, Axis = plt.subplots(1,1, figsize=(10,10))
+    Axis.imshow(ROI)
+    Axis.imshow(Seg*1, cmap=CMap, alpha=0.3)
+    Axis.plot([], color=(1,0,0), lw=1, label='Segmentation')
+    Axis.axis('off')
+    # plt.legend(loc='upper center', bbox_to_anchor=(0.5,1.15))
+    plt.subplots_adjust(0,0,1,1)
+    if Save:
+        plt.savefig(FileName)
+    plt.show()
 
 def PrintTime(Tic, Toc):
     """
@@ -720,14 +744,15 @@ Results.SegMin = 5
 for Key in Dict.keys():
     Automatic = np.zeros(NROIs)
     for i in range(NROIs):
-        Gray = color.rgb2gray(Dict[Key]['ROI'][i])
+        Gray = color.rgb2gray(Dict[Key]['ROIs'][i])
         Segmented = PCNN(Gray, Beta, AlphaF, VF, AlphaL, VL, AlphaT)
         Values = np.unique(Segmented)
         if len(Values) > Results.SegMin:
             Bin = (Segmented == Values[Results.SegMin]) * 1
-            BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
-            Automatic[i] = BinDensity
-            PlotArray(Bin, 'Segment ' + str(Results.SegMin))
+            # BinDensity = Bin.sum() / Dict[Key]['Bone'][i].sum()
+            # Automatic[i] = BinDensity
+            FileName = Path.cwd() / 'Scripts' / 'RandomForest' / str('PCNN_S' + str(Key) + '_ROI' + str(i) + '.jpg')
+            PlotOverlay(Dict[Key]['ROIs'][i], Bin, Save=True, FileName=FileName)
     Dict[Key]['PCNN'] = np.array(Automatic)
 
 # Plot final results

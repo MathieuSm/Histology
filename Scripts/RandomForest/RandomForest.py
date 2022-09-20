@@ -324,7 +324,7 @@ PlotImage(Seg_ROI)
 ROI_Label, Ticks = ExtractLabels(Seg_ROI, DilateCM=True)
 PlotImage(ROI_Label)
 
-Smin, Smax = 0.5, 8
+Smin, Smax = 0.5, 16
 FNames = FeatureNames(Smin, Smax)
 
 F_ROI = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
@@ -332,6 +332,26 @@ F_ROI = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
 
 Features = F_ROI[ROI_Label > 0]
 Label = ROI_Label[ROI_Label > 0]
+
+Colors = [(0,0,0),(1,0,0),(0,0,1),(0,0,1),(1,1,1)]
+Values = [0, 0.25, 0.5, 0.75, 1]
+
+def PlotLabel(Seg):
+
+    Image = np.zeros((Seg.shape[0], Seg.shape[1], 3))
+
+    Colors = [(0,0,0),(1,0,0),(0,1,0),(0,0,1),(1,1,1)]
+    for iValue, Value in enumerate(np.unique(Seg)):
+        Filter = Seg == Value
+        Image[Filter] = Colors[iValue]
+
+
+    Figure, Axis = plt.subplots(1,1, figsize=(10,10))
+    Axis.imshow(Image)
+    Axis.plot([], color=(1,0,0), lw=1, label='Segmentation')
+    Axis.axis('off')
+    plt.subplots_adjust(0,0,1,1)
+    plt.show()
 
 for Key, ROINumber in [[0, 0], [4, 2]]:
     ROI = Dict[Key]['ROIs'][ROINumber]
@@ -341,7 +361,7 @@ for Key, ROINumber in [[0, 0], [4, 2]]:
     FileName = CWD / str('Sample' + str(Key) + '_Seg' + str(ROINumber) + '.png')
     Seg_ROI = io.imread(str(FileName))
     ROI_Label = ExtractLabels(Seg_ROI)[0]
-    PlotImage(ROI_Label)
+    PlotLabel(ROI_Label)
 
     Features = np.vstack([Features,F_ROI[ROI_Label > 0]])
     Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
@@ -410,7 +430,7 @@ Results = future.predict_segmenter(Features, Classifier)
 CM = metrics.confusion_matrix(Label,Results,normalize=None)
 CM2 = metrics.confusion_matrix(Label,Results,normalize='true')
 CM3 = metrics.confusion_matrix(Label,Results,normalize='pred')
-VSpace = 0.15
+VSpace = 0.2
 
 Figure, Axis = plt.subplots(1,1, figsize=(5.5,4.5))
 Axis.matshow(CM3, cmap='binary', alpha=0.33)
@@ -517,7 +537,7 @@ PrintTime(Tic, Toc)
 # See new predictions
 Results = future.predict_segmenter(Features[:,Mask], Classifier)
 
-def PlotOverlay(ROI,Seg):
+def PlotOverlay(ROI,Seg, Save=False, FileName=None):
 
     CMapDict = {'red':((0.0, 0.0, 0.0),
                        (0.5, 1.0, 1.0),
@@ -537,6 +557,8 @@ def PlotOverlay(ROI,Seg):
     Axis.axis('off')
     # plt.legend(loc='upper center', bbox_to_anchor=(0.5,1.15))
     plt.subplots_adjust(0,0,1,1)
+    if Save:
+        plt.savefig(FileName)
     plt.show()
 
 Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
@@ -549,7 +571,8 @@ for Key in Dict.keys():
                      sigma_min=Smin, sigma_max=Smax)
         R_Test = future.predict_segmenter(F_Test, Classifier)
 
-        PlotOverlay(TestROI,R_Test == 1)
+        FileName = CWD / str('RF_S' + str(Key) + '_ROI' + str(ROINumber) + '.jpg')
+        PlotOverlay(TestROI,R_Test == 1, Save=True, FileName=FileName)
 
         Data.loc[ROINumber,Key] = np.sum(R_Test == 1) / R_Test.size
         Toc = time.time()
@@ -566,6 +589,15 @@ Data2Fit = pd.DataFrame({'Manual':Density.mean(axis=0),'Automatic':Data.mean(axi
 Data2Fit = pd.DataFrame({'Manual':Density.values.ravel(),'Automatic':Data.values.ravel()})
 # Data2Fit = Data2Fit[Data2Fit['Manual'] > 2E-4].reset_index()
 Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']].astype('float'))
+
+
+# Fit with error bar
+
+
+
+
+
+
 
 
 Figure, Axis = plt.subplots(1,1)
