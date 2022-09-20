@@ -39,4 +39,7 @@
 
 # Ignore manual of confocal microscope
 Tests/Calcein/Nikon/Docs/
+
+# Ignore big dictionaries
 /OptimizationData.pkl
+/Scripts/RandomForest/ROIs.pkl
