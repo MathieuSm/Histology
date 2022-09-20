@@ -15,14 +15,66 @@ from sklearn import metrics
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
-from skimage import io, future, filters, exposure
 from sklearn.ensemble import RandomForestClassifier
+from matplotlib.colors import LinearSegmentedColormap
 from skimage.feature import multiscale_basic_features as mbf
+from skimage import io, future, filters, exposure, morphology
+
 
 plt.rc('font', size=12)
 
 sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
 from Utilities import *
+
+class FeatureNames:
+
+    def __init__(self, SigmaMin=4, SigmaMax=32):
+
+        # Random forest classifier
+        Channels = ['R', 'G', 'B']
+        # Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
+        Names = ['I', 'E', 'H1', 'H2']
+        NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
+        F_Names = []
+        for Channel in Channels:
+            for Sigma in range(NumSigma):
+                SigmaValue = SigmaMin * 2 ** Sigma
+                if SigmaValue >= 1:
+                    SigmaValue = int(SigmaValue)
+                for Name in Names:
+                    F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
+
+        self.Names = F_Names
+
+
+def ExtractLabels(Seg, DilateCM=False):
+    # Extract segments
+    CL = Seg[:, :, 0] == 255
+    OC = Seg[:, :, 1] == 255
+    HC = CL * OC
+
+    # Label cement lines segments
+    Label = np.zeros(HC.shape, 'uint8')
+    Label[CL] = 1
+    Label[HC] = 0
+
+    if DilateCM == True:
+        Label = morphology.binary_dilation(Label, morphology.disk(1)) * 1
+
+    # Select random pixels for tissue
+    Coordinates = np.argwhere(~Label)
+    np.random.shuffle(Coordinates)
+    Pixels = Coordinates[:np.bincount(Label.ravel())[-1]]
+    Label = Label * 1
+    Label[Pixels[:, 0], Pixels[:, 1]] = 2
+
+    # Label osteocytes and Harvesian canals
+    Label[OC] = 3
+    Label[HC] = 4
+
+    Ticks = ['CL', 'IT', 'OC', 'HC']
+
+    return Label, Ticks
 
 def GetNeighbours(Array2D, N=1, Print=False):
     """
@@ -226,7 +278,9 @@ def FitData(DataFrame):
     return DataFrame, FitResults, R2, SE, p, [CI_l, CI_r]
 
 # Load dictionary
-with open('OptimizationData.pkl', 'rb') as f:
+CWD = Path.cwd() / 'Scripts' / 'RandomForest'
+FileName = CWD / 'ROIs.pkl'
+with open(str(FileName), 'rb') as f:
     Dict = pickle.load(f)
 
 # Compute mean ROI histogram
@@ -235,7 +289,7 @@ Histograms = np.zeros((len(Dict.keys()),3,3,nBins))
 for RGB in range(3):
     for nKey, Key in enumerate(Dict.keys()):
         for nROI in range(3):
-            ROI = Dict[Key]['ROI'][nROI]
+            ROI = Dict[Key]['ROIs'][nROI]
             Hists, Bins = np.histogram(ROI[:, :, RGB], density=False, bins=nBins, range=(0, 255))
             Histograms[nKey,nROI,RGB] = Hists
 MeanHist = np.mean(Histograms,axis=(0,1)).round().astype('int')
@@ -258,120 +312,104 @@ PlotImage(Reference)
 
 
 # Load images
-ROI = io.imread('TestROI.png')[470:750,135:550]
+FileName = CWD / 'TestROI.png'
+ROI = io.imread(str(FileName))
 ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
 PlotImage(ROI)
 
-
-Seg_ROI = io.imread('TestROI_Forest.png')[470:750,135:550]
+FileName = CWD / 'TestROI_Forest.png'
+Seg_ROI = io.imread(str(FileName))
 PlotImage(Seg_ROI)
 
-# Extract segments
-CL = Seg_ROI[:,:,0] == 255
-OC = Seg_ROI[:,:,1] == 255
-IT = Seg_ROI[:,:,2] > 220
-HC = CL * OC * IT
-PlotImage(HC)
+ROI_Label, Ticks = ExtractLabels(Seg_ROI, DilateCM=True)
+PlotImage(ROI_Label)
 
-# Label segments
-Label = np.zeros(HC.shape,'uint8')
-Label[OC] = 3
-Label[CL] = 1
-Label[HC] = 4
-Ticks = ['CL','IT','OC','HC']
+Smin, Smax = 0.5, 8
+FNames = FeatureNames(Smin, Smax)
 
-from skimage import morphology
-Label = morphology.binary_dilation(Label,morphology.disk(1)) * 1
-Label = morphology.binary_dilation(Label,morphology.disk(3))*1 + Label*1
-PlotImage(Label)
+F_ROI = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
+            sigma_min=Smin,sigma_max=Smax)
 
-# Select random pixels
-Coordinates = np.argwhere(~Label)
-np.random.shuffle(Coordinates)
-Pixels = Coordinates[:np.bincount(Label.ravel())[-1]]
-Label = Label * 1
-Label[Pixels[:,0],Pixels[:,1]] = 2
-PlotImage(Label)
+Features = F_ROI[ROI_Label > 0]
+Label = ROI_Label[ROI_Label > 0]
 
-# Random forest classifier
-Channels = ['R','G','B']
-# Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
-Names = ['I', 'E', 'H1', 'H2']
-SigmaMin = 4
-SigmaMax = 32
-NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
-F_Names = []
-for Channel in Channels:
-    for Sigma in range(NumSigma):
-        SigmaValue = SigmaMin * 2**Sigma
-        if SigmaValue >= 1:
-            SigmaValue = int(SigmaValue)
-        for Name in Names:
-            F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
+for Key, ROINumber in [[0, 0], [4, 2]]:
+    ROI = Dict[Key]['ROIs'][ROINumber]
+    ROI = np.round(exposure.match_histograms(ROI, Reference)).astype('uint8')
+    F_ROI = mbf(ROI, multichannel=True, intensity=True, edges=True, texture=True,
+                sigma_min=Smin, sigma_max=Smax)
+    FileName = CWD / str('Sample' + str(Key) + '_Seg' + str(ROINumber) + '.png')
+    Seg_ROI = io.imread(str(FileName))
+    ROI_Label = ExtractLabels(Seg_ROI)[0]
+    PlotImage(ROI_Label)
+
+    Features = np.vstack([Features,F_ROI[ROI_Label > 0]])
+    Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
+
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
 
 # for Sigma in range(NumSigma):
 #     SigmaValue = SigmaMin * 2 ** Sigma
 #     PlotImage(filters.gaussian(ROI,SigmaValue, multichannel=True))
 #
-for iKey, Key in enumerate(Dict.keys()):
-    for ROINumber in range(Dict[Key]['ROI'].shape[0]):
-        ROI = Dict[Key]['ROI'][ROINumber]
-        ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
-        ROI_Features = mbf(ROI, multichannel=True, intensity=True, edges=True, texture=True,
-                           sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
-
-        Skeleton = Dict[Key]['Skeleton'][ROINumber]
-        ROI_Label = morphology.binary_dilation(Skeleton, morphology.disk(1)) * 2
-        Coordinates = np.argwhere(~ROI_Label)
-        np.random.shuffle(Coordinates)
-        Pixels = Coordinates[:np.bincount(ROI_Label.ravel())[-1]]
-        ROI_Label[Pixels[:, 0], Pixels[:, 1]] = 1
-
-        # if iKey == 0 and ROINumber == 0:
-        #     Features = ROI_Features[ROI_Label > 0]
-        #     Label = ROI_Label[ROI_Label > 0]
-        # else:
-        if iKey == 0 and ROINumber == 0:
-            Features = Features[Label > 0]
-            Label = Label[Label > 0]
-
-        Features = np.vstack([Features,ROI_Features[ROI_Label > 0]])
-        Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
-
-Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
-               sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
-Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
-Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2)
-
-for i in range(int(Features.shape[-1]/4)+1):
-    PlotImage(Features[:,:,i])
-
-# # Add PCNN features
-# MoreFeatures = np.zeros((Features.shape[0],Features.shape[1],Features.shape[2] + 1))
-# MoreFeatures[:,:,:-1] = Features
-# MoreFeatures[:,:,-1] = PCNN_ROI
-# Features = MoreFeatures
-
-# Exclude H2
-LessFeatures = np.zeros((Features.shape[0],Features.shape[1],24))
-LessFeatures = Features[:,:,:24]
-LessNames = F_Names[:24]
-Features = LessFeatures
+# for iKey, Key in enumerate(Dict.keys()):
+#     for ROINumber in range(Dict[Key]['ROI'].shape[0]):
+#         ROI = Dict[Key]['ROI'][ROINumber]
+#         ROI = np.round(exposure.match_histograms(ROI,Reference)).astype('uint8')
+#         ROI_Features = mbf(ROI, multichannel=True, intensity=True, edges=True, texture=True,
+#                            sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
+#
+#         Skeleton = Dict[Key]['Skeleton'][ROINumber]
+#         ROI_Label = morphology.binary_dilation(Skeleton, morphology.disk(1)) * 1
+#         # Coordinates = np.argwhere(~ROI_Label)
+#         # np.random.shuffle(Coordinates)
+#         # Pixels = Coordinates[:np.bincount(ROI_Label.ravel())[-1]]
+#         # ROI_Label[Pixels[:, 0], Pixels[:, 1]] = 1
+#
+#         # if iKey == 0 and ROINumber == 0:
+#         #     Features = ROI_Features[ROI_Label > 0]
+#         #     Label = ROI_Label[ROI_Label > 0]
+#         # else:
+#         if iKey == 0 and ROINumber == 0:
+#             Features = Features[Label > 0]
+#             Label = Label[Label > 0]
+#
+#         Features = np.vstack([Features,ROI_Features[ROI_Label > 0]])
+#         Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
+#
+# Features = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
+#                sigma_min=SigmaMin,sigma_max=SigmaMax,num_sigma=NumSigma)
+# Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2)
+#
+# for i in range(int(Features.shape[-1]/4)+1):
+#     PlotImage(Features[:,:,i])
+#
+# # # Add PCNN features
+# # MoreFeatures = np.zeros((Features.shape[0],Features.shape[1],Features.shape[2] + 1))
+# # MoreFeatures[:,:,:-1] = Features
+# # MoreFeatures[:,:,-1] = PCNN_ROI
+# # Features = MoreFeatures
+#
+# # Exclude H2
+# LessFeatures = np.zeros((Features.shape[0],Features.shape[1],24))
+# LessFeatures = Features[:,:,:24]
+# LessNames = F_Names[:24]
+# Features = LessFeatures
 
 # Train model
+
 Tic = time.time()
-clf = future.fit_segmenter(Label[Label > 0],Features[Label > 0], Classifier)
+clf = future.fit_segmenter(Label,Features, Classifier)
 Toc = time.time()
 PrintTime(Tic, Toc)
 
 # See predictions
 Results = future.predict_segmenter(Features, Classifier)
-PlotImage(Results)
 
 # Assess model
-CM = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize=None)
-CM2 = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize='true')
-CM3 = metrics.confusion_matrix(Label[Label > 0].ravel(),Results[Label > 0].ravel(),normalize='pred')
+CM = metrics.confusion_matrix(Label,Results,normalize=None)
+CM2 = metrics.confusion_matrix(Label,Results,normalize='true')
+CM3 = metrics.confusion_matrix(Label,Results,normalize='pred')
 VSpace = 0.15
 
 Figure, Axis = plt.subplots(1,1, figsize=(5.5,4.5))
@@ -393,7 +431,7 @@ plt.show()
 # Dice coefficient
 Dice(Label-1,Results-1)
 
-Report = metrics.classification_report(Label[Label > 0].ravel(),Results[Label > 0].ravel())
+Report = metrics.classification_report(Label.ravel(),Results.ravel())
 print(Report)
 
 # Feature importance
@@ -465,37 +503,62 @@ def PlotFeatureImportance(Classifier, F_Names):
     plt.show()
 
     return FI
-FI = PlotFeatureImportance(Classifier, F_Names)
+FI = PlotFeatureImportance(Classifier, FNames.Names)
 
 Threshold = 0.02
 Mask = FI['Importance'] > Threshold
 
 # Train model again
 Tic = time.time()
-clf = future.fit_segmenter(Label[Label > 0],Features[Label > 0][:,Mask], Classifier)
+clf = future.fit_segmenter(Label,Features[:,Mask], Classifier)
 Toc = time.time()
 PrintTime(Tic, Toc)
 
 # See new predictions
 Results = future.predict_segmenter(Features[:,Mask], Classifier)
 
+def PlotOverlay(ROI,Seg):
+
+    CMapDict = {'red':((0.0, 0.0, 0.0),
+                       (0.5, 1.0, 1.0),
+                       (1.0, 1.0, 1.0)),
+                'green': ((0.0, 0.0, 0.0),
+                          (1.0, 0.0, 0.0)),
+                'blue': ((0.0, 0.0, 0.0),
+                         (1.0, 0.0, 0.0)),
+                'alpha': ((0.0, 0.0, 0.0),
+                          (1.0, 1.0, 1.0))}
+    CMap = LinearSegmentedColormap('MyMap',CMapDict)
+
+    Figure, Axis = plt.subplots(1,1, figsize=(10,10))
+    Axis.imshow(ROI)
+    Axis.imshow(Seg*1, cmap=CMap, alpha=0.3)
+    Axis.plot([], color=(1,0,0), lw=1, label='Segmentation')
+    Axis.axis('off')
+    # plt.legend(loc='upper center', bbox_to_anchor=(0.5,1.15))
+    plt.subplots_adjust(0,0,1,1)
+    plt.show()
 
 Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
     for ROINumber in range(3):
-        TestROI = Dict[Key]['ROI'][ROINumber]
+        TestROI = Dict[Key]['ROIs'][ROINumber]
+        Tic = time.time()
         TestROI = np.round(exposure.match_histograms(TestROI,Reference)).astype('uint8')
         F_Test = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
-                     sigma_min=SigmaMin, sigma_max=SigmaMax, num_sigma=NumSigma)
+                     sigma_min=Smin, sigma_max=Smax)
         R_Test = future.predict_segmenter(F_Test, Classifier)
-        # PlotImage(R_Test == 1)
-        # PlotImage(Dict[Key]['Skeleton'][ROINumber])
+
+        PlotOverlay(TestROI,R_Test == 1)
+
         Data.loc[ROINumber,Key] = np.sum(R_Test == 1) / R_Test.size
+        Toc = time.time()
+        PrintTime(Tic, Toc)
 
 Density = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
     for ROINumber in range(3):
-        TestSeg = Dict[Key]['Skeleton'][ROINumber]
+        TestSeg = Dict[Key]['Skeletons'][ROINumber]
         Density.loc[ROINumber,Key] = np.sum(TestSeg) / TestSeg.size
 
 
@@ -506,7 +569,7 @@ Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']].a
 
 
 Figure, Axis = plt.subplots(1,1)
-Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
+Axis.plot(Data2Fit['Residuals']/Data2Fit['Fitted Value'],linestyle='none',marker='o')
 plt.show()
 
 FitData(Data2Fit.drop([4,7,11]).reset_index(drop=True))
