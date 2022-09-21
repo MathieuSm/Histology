@@ -8,6 +8,8 @@ https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_trainable_s
 import sys
 import time
 import pickle
+
+import joblib
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -531,6 +533,8 @@ Mask = FI['Importance'] > Threshold
 # Train model again
 Tic = time.time()
 clf = future.fit_segmenter(Label,Features[:,Mask], Classifier)
+# FileName = CWD / 'Classifier.joblib'
+# joblib.dump(clf,FileName,compress=3)
 Toc = time.time()
 PrintTime(Tic, Toc)
 
@@ -539,23 +543,17 @@ Results = future.predict_segmenter(Features[:,Mask], Classifier)
 
 def PlotOverlay(ROI,Seg, Save=False, FileName=None):
 
-    CMapDict = {'red':((0.0, 0.0, 0.0),
-                       (0.5, 1.0, 1.0),
-                       (1.0, 1.0, 1.0)),
-                'green': ((0.0, 0.0, 0.0),
-                          (1.0, 0.0, 0.0)),
-                'blue': ((0.0, 0.0, 0.0),
-                         (1.0, 0.0, 0.0)),
-                'alpha': ((0.0, 0.0, 0.0),
-                          (1.0, 1.0, 1.0))}
-    CMap = LinearSegmentedColormap('MyMap',CMapDict)
+    SegImage = np.zeros((Seg.shape[0], Seg.shape[1], 4))
+
+    Colors = [(0,0,0,0),(1,0,0,1)]
+    for iValue, Value in enumerate(np.unique(Seg)):
+        Filter = Seg == Value
+        SegImage[Filter] = Colors[iValue]
 
     Figure, Axis = plt.subplots(1,1, figsize=(10,10))
     Axis.imshow(ROI)
-    Axis.imshow(Seg*1, cmap=CMap, alpha=0.3)
-    Axis.plot([], color=(1,0,0), lw=1, label='Segmentation')
+    Axis.imshow(SegImage, interpolation='none')
     Axis.axis('off')
-    # plt.legend(loc='upper center', bbox_to_anchor=(0.5,1.15))
     plt.subplots_adjust(0,0,1,1)
     if Save:
         plt.savefig(FileName)
