@@ -12,7 +12,7 @@ import statsmodels.formula.api as smf
 from scipy.stats.distributions import t
 from skimage import io, morphology, color, filters, segmentation, measure
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 
 import PSO
 import Filtering

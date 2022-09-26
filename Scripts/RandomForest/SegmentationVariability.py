@@ -7,7 +7,7 @@ from skimage import io, morphology
 import matplotlib.patheffects as pe
 from matplotlib.colors import LinearSegmentedColormap
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 from Utilities import *
 
 # Load dictionary

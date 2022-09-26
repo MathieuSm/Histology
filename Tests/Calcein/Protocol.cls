@@ -130,7 +130,7 @@
   \color{emphasis}{Step }
   {\large\color{emphasis}#1}
   \hfill
-  \color{emphasis}{\footnotesize  [\textasciitilde #3 minutes]\par}
+  \color{emphasis}{\footnotesize  [\textasciitilde #3]\par}
   \smallskip
   \textbf{\color{accent}{#2} }\par
   \smallskip

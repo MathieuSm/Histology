@@ -6,25 +6,32 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from scipy.ndimage import correlate
-from skimage import exposure, morphology, filters, feature, segmentation, measure
-import matplotlib as mpl
+from matplotlib.colors import LinearSegmentedColormap
+
 
 desired_width = 500
 np.set_printoptions(linewidth=desired_width,suppress=True,formatter={'float_kind':'{:3}'.format})
 pd.set_option('display.width', desired_width)
 plt.rc('font', size=12)
 
-def PlotArray(Array, Title, Colormap=False):
+def PlotArray(Array, Title, Green=False):
 
-    Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-    if Colormap:
-        Axes.imshow(Array,cmap=Colormap)
+    CMapDict = {'red': ((0.0, 0.0, 0.0),
+                        (1.0, 0.0, 0.0)),
+                'green': ((0.0, 0.0, 0.0),
+                          (1.0, 1.0, 1.0)),
+                'blue': ((0.0, 0.0, 0.0),
+                         (1.0, 0.0, 0.0))}
+    CMap = LinearSegmentedColormap('MyMap', CMapDict)
+
+    Figure, Axes = plt.subplots(1, 1)
+    if Green:
+        Axes.imshow(Array,cmap=CMap)
     else:
-        Axes.imshow(Array)
+        Axes.imshow(Array,cmap='binary_r')
     plt.title(Title)
     plt.axis('off')
-    plt.tight_layout()
+    plt.subplots_adjust(0,0,1,1)
     plt.show()
     plt.close(Figure)
 
@@ -109,7 +116,7 @@ def Histogram(Image,NBins=256,Plot=False):
 # List tests directories
 CurrentDirectory = os.getcwd()
 Directory = os.path.join(CurrentDirectory,'Tests/Calcein/')
-Tests = [Dir for Dir in os.listdir(Directory) if os.path.isdir(Directory+Dir)][1:]
+Tests = [Dir for Dir in os.listdir(Directory) if os.path.isdir(Directory+Dir)][2:-1]
 Tests.sort()
 
 # Analyze images of 1 directory
@@ -129,7 +136,7 @@ for TestNumber in range(3):
         Sample = Parameters.loc[Index,'Sample']
         Image = sitk.ReadImage(TestDir + Sample + '.BMP')
         Array = sitk.GetArrayFromImage(Image)
-        # PlotArray(Array[:,:,:],Sample)
+        PlotArray(Array[:,:,:],'')
 
         GreenValues = Array[:, :, 1]
         # H, Bins = Histogram(GreenValues,Plot=True)
@@ -140,7 +147,7 @@ for TestNumber in range(3):
         Threshold = OtsuFilter.GetThreshold()
 
         OtsuArray = sitk.GetArrayFromImage(OtsuImage)
-        PlotArray(OtsuArray * GreenValues, '', Colormap='binary_r')
+        PlotArray(OtsuArray * GreenValues, '', Green=True)
 
         # Extract segmented image data
         Values = (OtsuArray * GreenValues)
@@ -159,19 +166,27 @@ for TestNumber in range(3):
         Background = Background.append(Dict, ignore_index=True)
 
 
+# Means
+Means = []
+for i in Data.index:
+    Means.append(Data.loc[i,'Values'].mean())
+Mean = np.mean(Means)
+Std = np.std(Means,ddof=1)
+
+
 # Plot Stats
 TestSamples = Data['Test'].drop_duplicates().sort_values().values
 GroupedData = Data.groupby(by='Test')
 Figure, Axes = plt.subplots(1, 1, figsize=(3.5, 4.5),dpi=100)
 Axes.boxplot(Data.loc[:,'Values'],vert=True,
-             showmeans=True,
+             showmeans=False,
              boxprops=dict(linestyle='-',color=(0,0,0)),
-             medianprops=dict(linestyle='-',color=(1,0,0)),
+             medianprops=dict(linestyle='-',color=(0,0,0)),
              whiskerprops=dict(linestyle='--',color=(0,0,0)),
              meanprops=dict(marker='x',markeredgecolor=(0,0,1)),
              flierprops=dict(marker='o',markeredgecolor=(0,0,0,0.01)))
-Axes.plot([],linestyle='-',color=(1,0,0),label='Median')
-Axes.plot([],linestyle='none',marker='x',color=(0,0,1),label='Mean')
+Axes.plot([0.8, 6.2], [Mean, Mean],color=(1,0,0),label='Mean')
+Axes.fill_between([0.8, 6.2], [Mean+Std, Mean+Std], [Mean-Std, Mean-Std],color=(0,0,0,0.2),label='Std')
 Axes.set_xlabel('Sample')
 Axes.set_ylabel('Pixel Intensity')
 Axes.set_xticks([2.5, 5, 6])
@@ -184,16 +199,23 @@ plt.subplots_adjust(0.2)
 plt.show()
 plt.close(Figure)
 
+
+Means = []
+for i in Data.index:
+    Means.append(Background.loc[i,'Values'].mean())
+Mean = np.mean(Means)
+Std = np.std(Means,ddof=1)
+
 Figure, Axes = plt.subplots(1, 1, figsize=(3.5, 4.5),dpi=100)
 Axes.boxplot(Background.loc[:,'Values'],vert=True,
-             showmeans=True,
+             showmeans=False,
              boxprops=dict(linestyle='-',color=(0,0,0)),
-             medianprops=dict(linestyle='-',color=(1,0,0)),
+             medianprops=dict(linestyle='-',color=(0,0,0)),
              whiskerprops=dict(linestyle='--',color=(0,0,0)),
              meanprops=dict(marker='x',markeredgecolor=(0,0,1)),
              flierprops=dict(marker='o',markeredgecolor=(0,0,0,0.01)))
-Axes.plot([],linestyle='-',color=(1,0,0),label='Median')
-Axes.plot([],linestyle='none',marker='x',color=(0,0,1),label='Mean')
+Axes.plot([0.8, 6.2], [Mean, Mean],color=(1,0,0),label='Mean')
+Axes.fill_between([0.8, 6.2], [Mean+Std, Mean+Std], [Mean-Std, Mean-Std],color=(0,0,0,0.2),label='Std')
 Axes.set_xlabel('Sample')
 Axes.set_ylabel('Pixel Intensity')
 Axes.set_xticks([2.5, 5, 6])

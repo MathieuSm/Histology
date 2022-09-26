@@ -11,7 +11,7 @@ from scipy.stats.distributions import t
 from skimage import io, morphology, measure, filters
 from PIL import Image
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 from Utilities import *
 
 Image.MAX_IMAGE_PIXELS = None

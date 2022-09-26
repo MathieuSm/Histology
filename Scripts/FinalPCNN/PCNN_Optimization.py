@@ -12,7 +12,7 @@ from scipy.stats.distributions import t
 from matplotlib.colors import LinearSegmentedColormap
 from skimage import morphology, measure, color, exposure
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 
 import PSO
 

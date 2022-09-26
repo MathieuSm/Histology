@@ -16,7 +16,7 @@ from skimage import exposure
 
 plt.rc('font', size=12)
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 from Utilities import *
 
 # Load dictionary

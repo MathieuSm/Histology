@@ -8,7 +8,6 @@ https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_trainable_s
 import sys
 import time
 import pickle
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -20,22 +19,18 @@ from scipy.stats.distributions import t
 from sklearn.ensemble import RandomForestClassifier
 from matplotlib.colors import LinearSegmentedColormap
 from skimage.feature import multiscale_basic_features as mbf
-from skimage import io, future, filters, exposure, morphology
+from skimage import io, future, filters, exposure, morphology, color
 
 
 plt.rc('font', size=12)
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 from Utilities import *
 
 class FeatureNames:
 
-    def __init__(self, SigmaMin=4, SigmaMax=32):
+    def __init__(self, SigmaMin=4, SigmaMax=32, Channels=['R','G','B'], Features=['I', 'E', 'H1', 'H2']):
 
-        # Random forest classifier
-        Channels = ['R', 'G', 'B']
-        # Names = ['Intensity', 'Edges', 'Hessian 1', 'Hessian 2']
-        Names = ['I', 'E', 'H1', 'H2']
         NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
         F_Names = []
         for Channel in Channels:
@@ -43,8 +38,8 @@ class FeatureNames:
                 SigmaValue = SigmaMin * 2 ** Sigma
                 if SigmaValue >= 1:
                     SigmaValue = int(SigmaValue)
-                for Name in Names:
-                    F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Name)
+                for Feature in Features:
+                    F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Feature)
 
         self.Names = F_Names
 
@@ -285,6 +280,11 @@ FileName = CWD / 'ROIs.pkl'
 with open(str(FileName), 'rb') as f:
     Dict = pickle.load(f)
 
+
+# # Load classifier
+# FileName = str(CWD / 'Classifier.joblib')
+# Clf = joblib.load(FileName)
+
 # Compute mean ROI histogram
 nBins = 255
 Histograms = np.zeros((len(Dict.keys()),3,3,nBins))
@@ -324,20 +324,6 @@ Seg_ROI = io.imread(str(FileName))
 PlotImage(Seg_ROI)
 
 ROI_Label, Ticks = ExtractLabels(Seg_ROI, DilateCM=True)
-PlotImage(ROI_Label)
-
-Smin, Smax = 0.5, 16
-FNames = FeatureNames(Smin, Smax)
-
-F_ROI = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
-            sigma_min=Smin,sigma_max=Smax)
-
-Features = F_ROI[ROI_Label > 0]
-Label = ROI_Label[ROI_Label > 0]
-
-Colors = [(0,0,0),(1,0,0),(0,0,1),(0,0,1),(1,1,1)]
-Values = [0, 0.25, 0.5, 0.75, 1]
-
 def PlotLabel(Seg):
 
     Image = np.zeros((Seg.shape[0], Seg.shape[1], 3))
@@ -354,6 +340,21 @@ def PlotLabel(Seg):
     Axis.axis('off')
     plt.subplots_adjust(0,0,1,1)
     plt.show()
+PlotLabel(ROI_Label)
+
+Smin, Smax = 0.5, 8
+FNames = FeatureNames(Smin, Smax, Channels=['R','G','B','H','S','V'], Features=['I', 'E', 'H1', 'H2'])
+
+F_ROI = mbf(ROI, multichannel=True,intensity=True,edges=True,texture=True,
+            sigma_min=Smin,sigma_max=Smax)
+
+Features = F_ROI[ROI_Label > 0]
+Label = ROI_Label[ROI_Label > 0]
+
+HSV = color.rgb2hsv(ROI)
+F_HSV = mbf(HSV, multichannel=True, intensity=True, edges=True, texture=True,
+            sigma_min=Smin, sigma_max=Smax)
+Features = np.hstack([Features, F_HSV[ROI_Label > 0]])
 
 for Key, ROINumber in [[0, 0], [4, 2]]:
     ROI = Dict[Key]['ROIs'][ROINumber]
@@ -365,10 +366,15 @@ for Key, ROINumber in [[0, 0], [4, 2]]:
     ROI_Label = ExtractLabels(Seg_ROI)[0]
     PlotLabel(ROI_Label)
 
-    Features = np.vstack([Features,F_ROI[ROI_Label > 0]])
+    HSV = color.rgb2hsv(ROI)
+    F_HSV = mbf(HSV, multichannel=True, intensity=True, edges=True, texture=True,
+                sigma_min=Smin, sigma_max=Smax)
+    NewFeatures = np.hstack([F_ROI[ROI_Label > 0], F_HSV[ROI_Label > 0]])
+
+    Features = np.vstack([Features,NewFeatures])
     Label = np.concatenate([Label,ROI_Label[ROI_Label > 0]])
 
-Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='balanced')
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=1/3, class_weight='balanced')
 
 # for Sigma in range(NumSigma):
 #     SigmaValue = SigmaMin * 2 ** Sigma
@@ -421,7 +427,7 @@ Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.2, class_weight='ba
 # Train model
 
 Tic = time.time()
-clf = future.fit_segmenter(Label,Features, Classifier)
+clf = future.fit_segmenter(Label, Features, Classifier)
 Toc = time.time()
 PrintTime(Tic, Toc)
 
@@ -466,38 +472,62 @@ def PlotFeatureImportance(Classifier, F_Names):
     Features = FI['Feature'].unique()
 
     Sorted = FI.sort_values(by='Importance')
-    R = Sorted[Sorted['Channel'] == 'R']
-    G = Sorted[Sorted['Channel'] == 'G']
-    B = Sorted[Sorted['Channel'] == 'B']
+    Channels = FI['Channel'].unique()
+    CList = []
+    if 'R' in Channels:
+        R = Sorted[Sorted['Channel'] == 'R']
+        CList.append(R)
+    if 'G' in Channels:
+        G = Sorted[Sorted['Channel'] == 'G']
+        CList.append(G)
+    if 'B' in Channels:
+        B = Sorted[Sorted['Channel'] == 'B']
+        CList.append(B)
+    if 'H' in Channels:
+        H = Sorted[Sorted['Channel'] == 'H']
+        CList.append(H)
+    if 'S' in Channels:
+        S = Sorted[Sorted['Channel'] == 'S']
+        CList.append(S)
+    if 'V' in Channels:
+        V = Sorted[Sorted['Channel'] == 'V']
+        CList.append(V)
 
     Sigmas = FI['Sigma'].unique()
 
+    CMapDict = {'red': ((0.0, 1.0, 1.0),
+                        (1/2, 0.0, 0.0),
+                        (1.0, 0.0, 0.0)),
+                'blue': ((0.0, 0.0, 0.0),
+                         (1/4, 1.0, 1.0),
+                         (3/4, 1.0, 1.0),
+                         (1.0, 0.0, 0.0)),
+                'green': ((0.0, 0.0, 0.0),
+                          (1/2, 0.0, 0.0),
+                          (1.0, 1.0, 1.0))}
+    CMap = LinearSegmentedColormap('MyMap', CMapDict)
+
     if len(Sigmas) == 1:
+
         Figure, Axis = plt.subplots(1,1)
-        RS = R.sort_values(by='Feature')
-        GS = G.sort_values(by='Feature')
-        BS = B.sort_values(by='Feature')
-        Axis.bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
-        Axis.bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
-        Axis.bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
+
+        for iC, C in enumerate(CList):
+            S = C.sort_values(by='Feature')
+            Axis.bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
+            Axis.plot([],color=CMap(iC / len(CList)), label=C['Channel'].unique())
         Axis.set_xticks(np.arange(len(Features)), Features)
 
     elif len(Sigmas) < 4:
         Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
-        i = 0
-        for Sigma in Sigmas:
-            RF = R[R['Sigma'] == Sigma]
-            GF = G[G['Sigma'] == Sigma]
-            BF = B[B['Sigma'] == Sigma]
-            RS = RF.sort_values(by='Feature')
-            GS = GF.sort_values(by='Feature')
-            BS = BF.sort_values(by='Feature')
-            Axis[i].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1, 0, 0), facecolor=(0, 0, 0, 0))
-            Axis[i].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0, 1, 0), facecolor=(0, 0, 0, 0))
-            Axis[i].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0, 0, 1), facecolor=(0, 0, 0, 0))
-            Axis[i].set_xticks(np.arange(len(Features)), Features)
-            Axis[i].set_title('Sigma = ' + Sigma)
-            i += 1
+
+        for i, Sigma in enumerate(Sigmas):
+            for iC, C in enumerate(CList):
+                F = C[C['Sigma'] == Sigma]
+                S = F.sort_values(by='Feature')
+                Axis[i].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
+                Axis[i].set_xticks(np.arange(len(Features)), Features)
+                Axis[i].set_title('Sigma = ' + Sigma)
+                Axis[i].plot([], color=CMap(iC / len(CList)), label=C['Channel'].unique())
 
     else:
         NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
@@ -505,29 +535,24 @@ def PlotFeatureImportance(Classifier, F_Names):
         Figure, Axis = plt.subplots(NRows, NColumns, sharex=True, sharey=True)
         Columns = np.tile(np.arange(NColumns),NRows)
         Rows = np.repeat(np.arange(NRows),NColumns)
-        i = 0
-        for Sigma in Sigmas:
+        for i, Sigma in enumerate(Sigmas):
             Row = Rows[i]
             Column = Columns[i]
-            RF = R[R['Sigma'] == Sigma]
-            GF = G[G['Sigma'] == Sigma]
-            BF = B[B['Sigma'] == Sigma]
-            RS = RF.sort_values(by='Feature')
-            GS = GF.sort_values(by='Feature')
-            BS = BF.sort_values(by='Feature')
-            Axis[Row,Column].bar(np.arange(len(RS)), RS['Importance'], edgecolor=(1,0,0), facecolor=(0,0,0,0))
-            Axis[Row,Column].bar(np.arange(len(GS)), GS['Importance'], edgecolor=(0,1,0), facecolor=(0,0,0,0))
-            Axis[Row,Column].bar(np.arange(len(BS)), BS['Importance'], edgecolor=(0,0,1), facecolor=(0,0,0,0))
-            Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
-            Axis[Row,Column].set_title('Sigma = ' + Sigma)
-            i += 1
+            for iC, C in enumerate(CList):
+                F = C[C['Sigma'] == Sigma]
+                S = F.sort_values(by='Feature')
+                Axis[Row,Column].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
+                Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
+                Axis[Row,Column].set_title('Sigma = ' + Sigma)
+                Axis[Row,Column].plot([], color=CMap(iC / len(CList)), label=C['Channel'].unique())
 
+    plt.legend(loc='upper center', ncol=3, bbox_to_anchor=(0,1.15))
     plt.show()
 
     return FI
 FI = PlotFeatureImportance(Classifier, FNames.Names)
 
-Threshold = 0.02
+Threshold = 0.01
 Mask = FI['Importance'] > Threshold
 
 # Train model again
@@ -561,16 +586,23 @@ def PlotOverlay(ROI,Seg, Save=False, FileName=None):
 
 Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
 for Key in Dict.keys():
+    Dict[Key]['RF'] = {}
     for ROINumber in range(3):
         TestROI = Dict[Key]['ROIs'][ROINumber]
         Tic = time.time()
         TestROI = np.round(exposure.match_histograms(TestROI,Reference)).astype('uint8')
         F_Test = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
                      sigma_min=Smin, sigma_max=Smax)
-        R_Test = future.predict_segmenter(F_Test, Classifier)
+        TestROI = color.rgb2hsv(TestROI)
+        F_HSV = mbf(TestROI, multichannel=True, intensity=True, edges=True, texture=True,
+                    sigma_min=Smin, sigma_max=Smax)
+        Feat = np.concatenate([F_Test,F_HSV], axis=-1)
+        R_Test = future.predict_segmenter(Feat[:,:,Mask], Classifier)
 
         FileName = CWD / str('RF_S' + str(Key) + '_ROI' + str(ROINumber) + '.jpg')
+        TestROI = color.hsv2rgb(TestROI)
         PlotOverlay(TestROI,R_Test == 1, Save=True, FileName=FileName)
+        Dict[Key]['RF'][ROINumber] = R_Test == 1
 
         Data.loc[ROINumber,Key] = np.sum(R_Test == 1) / R_Test.size
         Toc = time.time()
@@ -582,6 +614,13 @@ for Key in Dict.keys():
         TestSeg = Dict[Key]['Skeletons'][ROINumber]
         Density.loc[ROINumber,Key] = np.sum(TestSeg) / TestSeg.size
 
+Data = pd.DataFrame(columns=Dict.keys(),index=range(3))
+for Key in Dict.keys():
+    for ROINumber in range(3):
+        R_Test = Dict[Key]['RF'][ROINumber]
+        R_Test = morphology.remove_small_objects(R_Test, 200)
+        PlotImage(R_Test)
+        Data.loc[ROINumber,Key] = np.sum(R_Test) / R_Test.size
 
 Data2Fit = pd.DataFrame({'Manual':Density.mean(axis=0),'Automatic':Data.mean(axis=0)})
 Data2Fit = pd.DataFrame({'Manual':Density.values.ravel(),'Automatic':Data.values.ravel()})
@@ -594,12 +633,18 @@ Data2Fit, FitResults, R2, SE, p, CI = FitData(Data2Fit[['Automatic','Manual']].a
 
 
 
-
-
+from skimage import color
+HED = color.rgb2yiq(TestROI)
+# Create an RGB image for each of the stains
+null = np.zeros_like(HED[:, :, 0])
+ihc_h = color.yiq2rgb(np.stack((HED[:, :, 0], null, null), axis=-1))
+ihc_e = color.yiq2rgb(np.stack((null, HED[:, :, 1], null), axis=-1))
+ihc_d = color.yiq2rgb(np.stack((null, null, HED[:, :, 2]), axis=-1))
+PlotImage(ihc_d)
 
 
 Figure, Axis = plt.subplots(1,1)
-Axis.plot(Data2Fit['Residuals']/Data2Fit['Fitted Value'],linestyle='none',marker='o')
+Axis.plot(Data2Fit['Residuals'],linestyle='none',marker='o')
 plt.show()
 
 FitData(Data2Fit.drop([4,7,11]).reset_index(drop=True))

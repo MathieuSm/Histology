@@ -8,7 +8,7 @@ from scipy.ndimage import correlate
 from skimage import morphology, color
 import time
 
-sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPipeline'))
+sys.path.insert(0, str(Path.cwd() / 'Scripts/FinalPCNN'))
 import PSO
 from Filtering import FFT2D
 
