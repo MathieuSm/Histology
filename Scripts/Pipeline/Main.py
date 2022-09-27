@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
 from skimage import io, future, exposure, morphology
+from statsmodels.regression.mixed_linear_model import MixedLMParams
 
 Version = '01'
 
@@ -107,7 +108,7 @@ def ValidArea(Bone, GridSize, Threshold, Plot=False):
     """
 
     Tic = time.time()
-    print('Define valid area ...')
+    print('\nDefine valid area ...')
 
     NPoints = np.ceil(np.array(Bone.shape) / GridSize)
     XPoints = np.arange(NPoints[1], dtype='int') * GridSize
@@ -127,9 +128,9 @@ def ValidArea(Bone, GridSize, Threshold, Plot=False):
                 ValidArea[YGrid[j, i]:YGrid[j+1, i], XGrid[j, i]:XGrid[j, i+1]] = 1
 
     if Plot:
-        Shape = np.array(Bone.shape[:-1]) / 1000
+        Shape = np.array(Bone.shape) / 1000
         Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Bone.Image)
+        Axis.imshow(Bone, cmap='binary_r')
         Axis.imshow(ValidArea, cmap='Greens', alpha=1/3)
         Axis.axis('off')
         plt.subplots_adjust(0, 0, 1, 1)
@@ -158,6 +159,7 @@ def RandCoords(Coords, ROINumber, TotalNROIs):
     XRange = XCoords.max() - XCoords.min()
     Width = XRange / (TotalNROIs + 1)
     RandX = int((ROINumber + 1) * XRange / (TotalNROIs + 1) + np.random.randn() * Width**(1 / 2))
+    RandX = XCoords[np.argmin(np.abs(XCoords - RandX))]
     YCoords = YCoords[XCoords == RandX]
     YRange = YCoords.max() - YCoords.min()
     RandY = int(np.median(YCoords) + np.random.randn() * (YRange/2)**(1 / 2))
@@ -187,12 +189,10 @@ def ExtractROIs(Array, N, Plot=False):
     Threshold = 0.88
 
     # Segment bone and extract coordinate
-    Bone = SegmentBone(Array, Plot=True)
-    LessBone = morphology.binary_erosion(Bone,morphology.disk(50))
-    LessBone2 = morphology.remove_small_objects(LessBone,50000)
-    Bone = morphology.binary_dilation(LessBone2,morphology.disk(50))
-    PlotImage(Bone)
-    Y, X = np.where(Bone)
+    Bone = SegmentBone(Array, Plot=False)
+    GridSize = int(Arguments.ROI_S / Arguments.Pixel_S * 1.2)
+    BoneVA = ValidArea(Bone, GridSize, Threshold, Plot=True)
+    Y, X = np.where(BoneVA)
 
     # Record time
     Tic = time.time()
@@ -226,6 +226,7 @@ def ExtractROIs(Array, N, Plot=False):
         Y1, Y2 = RandY - int(ROISize / 2), RandY + int(ROISize / 2)
         BoneROI = Bone[Y1:Y2, X1:X2]
         BVTV = BoneROI.sum() / BoneROI.size
+        ROI = True
 
         j = 0
         while BVTV < Threshold:
@@ -239,10 +240,10 @@ def ExtractROIs(Array, N, Plot=False):
             j += 1
             if j == 100:
                 print('No ROI found after 100 iterations')
+                ROI = False
                 break
 
         if Plot:
-
             Xs[i] += [X1, X2]
             Ys[i] += [Y1, Y2]
 
@@ -252,8 +253,13 @@ def ExtractROIs(Array, N, Plot=False):
             plt.subplots_adjust(0, 0, 1, 1)
             plt.show()
 
-        # Store ROI and coordinates for plotting
-        ROIs[i] += Array[Y1:Y2, X1:X2]
+        # Store ROI and remove coordinates to no select the same
+        if ROI:
+            ROIs[i] += Array[Y1:Y2, X1:X2]
+            XRemove = (FilteredX > X1) & (FilteredX < X2)
+            YRemove = (FilteredY > Y1) & (FilteredY < Y2)
+            FilteredX = FilteredX[~(XRemove & YRemove)]
+            FilteredY = FilteredY[~(XRemove & YRemove)]
 
     if Plot:
         Shape = np.array(Array.shape[:-1]) / 1000
@@ -379,7 +385,7 @@ class ArgumentsClass:
     def __init__(self):
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
         self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
-        self.N = 3
+        self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
 Arguments = ArgumentsClass()
@@ -407,19 +413,22 @@ def Main(Arguments):
         ROIs = ExtractROIs(Array, Arguments.N, Plot=True)
 
         for iROI, ROI in enumerate(ROIs):
-            # E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
-            Features = ExtractFeatures(ROI)[0]
-            S_ROI = future.predict_segmenter(Features, Classifier)
-            CL = S_ROI == 1
-            Results = morphology.remove_small_objects(CL, 200)
 
-            # Save segmentation results
-            FilePath = Path(Arguments.Path, 'SegmentationResults')
-            FileName = str(FilePath / str(Name + '_' + str(iROI) + '.png'))
-            PlotOverlay(ROI,Results,FileName)
+            if ROI.sum() > 0:
+                # E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
+                Features = ExtractFeatures(ROI)[0]
+                S_ROI = future.predict_segmenter(Features, Classifier)
+                CL = S_ROI == 1
+                Results = morphology.remove_small_objects(CL, 200)
 
-            S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
-            Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
+                # Save segmentation results
+                FilePath = Path(Arguments.Path, 'SegmentationResults')
+                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
+                # PlotOverlay(ROI,Results,FileName)
+
+                S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
+                Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
+
 
     # Build data frame for analysis
     Data2Fit = pd.DataFrame()
@@ -437,13 +446,33 @@ def Main(Arguments):
     Data2Fit['Donor'] = Data2Fit['Donor'].replace(Donors, np.arange(len(Donors))+1)
     Data2Fit['Side'] = Data2Fit['Side'].replace(['R', 'L'], [-1, 1])
     Data2Fit['Site'] = Data2Fit['Site'].replace(['M', 'L'], [-1, 1])
+    Data2Fit = Data2Fit.dropna()
+
+    # Plot data
+    Colors = [(0,0,0),(1,0,0),(0,0,1)]
+    Marker = ['none', 'o', 'x']
+    Figure, Axis = plt.subplots(1,1)
+    for L1, G1 in Data2Fit.groupby('Side'):
+        for L2, G2 in G1.groupby('Site'):
+            Axis.plot(G2['Donor'],G2['Density'],color=Colors[L2],marker=Marker[L1], linestyle='none', fillstyle='none')
+    Axis.plot([], color=Colors[-1], label='Inferior')
+    Axis.plot([], color=Colors[1], label='Superior')
+    Axis.plot([], color=(0,0,0), marker=Marker[-1], linestyle='none', label='Right')
+    Axis.plot([], color=(0,0,0), marker=Marker[1], linestyle='none', label='Left', fillstyle='none')
+    Axis.set_xticks(np.arange(len(Donors))+1, Donors)
+    Axis.set_xlim([0,4])
+    Axis.set_xlabel('Donor ID')
+    Axis.set_ylabel('Cement line density')
+    plt.legend(loc='upper center', ncol=4, bbox_to_anchor=(0.5,1.125), frameon=False)
+    plt.show()
 
     # Perform statistical analysis
-    LME = smf.mixedlm('Density ~ Site',
-                      vc_formula={'Side': '0 + C(Side)'},
+    Model = smf.mixedlm('Density ~ Site',
+                      # vc_formula={'Side': '0 + Side'},
                       re_formula='1',
                       data=Data2Fit,
-                      groups=Data2Fit['Donor']).fit(reml=True)
+                      groups=Data2Fit['Donor'])
+    LME = Model.fit(reml=True,method='lbfgs')
     print(LME.summary())
 
 if __name__ == '__main__':
@@ -465,3 +494,4 @@ if __name__ == '__main__':
     Arguments = Parser.parse_args()
 
     Main(Arguments)
+
