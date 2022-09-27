@@ -385,7 +385,7 @@ class ArgumentsClass:
     def __init__(self):
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
         self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
-        self.N = 5
+        self.N = 3
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
 Arguments = ArgumentsClass()
@@ -429,7 +429,6 @@ def Main(Arguments):
                 S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
                 Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
 
-
     # Build data frame for analysis
     Data2Fit = pd.DataFrame()
     i = 0
@@ -449,21 +448,22 @@ def Main(Arguments):
     Data2Fit = Data2Fit.dropna()
 
     # Plot data
-    Colors = [(0,0,0),(1,0,0),(0,0,1)]
+    Colors = [(0,0,0),(1,0,0),(0,0,1),(0,1,0)]
     Marker = ['none', 'o', 'x']
+    Offset = []
     Figure, Axis = plt.subplots(1,1)
-    for L1, G1 in Data2Fit.groupby('Side'):
-        for L2, G2 in G1.groupby('Site'):
-            Axis.plot(G2['Donor'],G2['Density'],color=Colors[L2],marker=Marker[L1], linestyle='none', fillstyle='none')
-    Axis.plot([], color=Colors[-1], label='Inferior')
-    Axis.plot([], color=Colors[1], label='Superior')
+    for L1, G1 in Data2Fit.groupby('Donor'):
+        for L2, G2 in G1.groupby('Side'):
+            Axis.plot(G2['Site'],G2['Density'],color=Colors[L1],marker=Marker[L2], linestyle='none', fillstyle='none')
+    for i in range(len(Donors)):
+        Axis.plot([], color=Colors[i+1], label=Donors[i])
     Axis.plot([], color=(0,0,0), marker=Marker[-1], linestyle='none', label='Right')
     Axis.plot([], color=(0,0,0), marker=Marker[1], linestyle='none', label='Left', fillstyle='none')
-    Axis.set_xticks(np.arange(len(Donors))+1, Donors)
-    Axis.set_xlim([0,4])
-    Axis.set_xlabel('Donor ID')
+    Axis.set_xticks([-1, 1], ['Inferior', 'Superior'])
+    Axis.set_xlim([-2,2])
+    Axis.set_xlabel('Site (-)')
     Axis.set_ylabel('Cement line density')
-    plt.legend(loc='upper center', ncol=4, bbox_to_anchor=(0.5,1.125), frameon=False)
+    plt.legend(loc='upper center', ncol=3, bbox_to_anchor=(0.5,1.15), frameon=False)
     plt.show()
 
     # Perform statistical analysis
