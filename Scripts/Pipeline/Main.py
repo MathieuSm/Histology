@@ -94,6 +94,53 @@ def SegmentBone(Image, Plot=False):
 
     return Bone
 
+def ValidArea(Bone, GridSize, Threshold, Plot=False):
+
+    """
+    Define valid area according to a given BV/TV threshold and a given grid size
+    :param Bone: Segmented bone
+    :param GridSize: Grid size to evaluate BV/TV
+    :param Threshold: Minimum BV/TV to consider area as valid
+    :param Plot: Plot valid area
+    :param Image: Add initial image on the plot
+    :return: Area with a sufficiently high BV/TV
+    """
+
+    Tic = time.time()
+    print('Define valid area ...')
+
+    NPoints = np.ceil(np.array(Bone.shape) / GridSize)
+    XPoints = np.arange(NPoints[1], dtype='int') * GridSize
+    YPoints = np.arange(NPoints[0], dtype='int') * GridSize
+    XPoints = np.append(XPoints, Bone.shape[1])
+    YPoints = np.append(YPoints, Bone.shape[0])
+    XGrid, YGrid = np.meshgrid(XPoints, YPoints)
+
+    # Compute subregion bone volume fraction
+    ValidArea = np.zeros(Bone.shape).astype('int')
+
+    for i in range(int(NPoints[1])):
+        for j in range(int(NPoints[0])):
+            SubRegion = Bone[YGrid[j, i]:YGrid[j + 1, i], XGrid[j, i]:XGrid[j, i + 1]]
+
+            if SubRegion.sum() / SubRegion.size > Threshold:
+                ValidArea[YGrid[j, i]:YGrid[j+1, i], XGrid[j, i]:XGrid[j, i+1]] = 1
+
+    if Plot:
+        Shape = np.array(Bone.shape[:-1]) / 1000
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Bone.Image)
+        Axis.imshow(ValidArea, cmap='Greens', alpha=1/3)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return ValidArea
+
 def RandCoords(Coords, ROINumber, TotalNROIs):
 
     """
@@ -140,7 +187,11 @@ def ExtractROIs(Array, N, Plot=False):
     Threshold = 0.88
 
     # Segment bone and extract coordinate
-    Bone = SegmentBone(Array, Plot=None)
+    Bone = SegmentBone(Array, Plot=True)
+    LessBone = morphology.binary_erosion(Bone,morphology.disk(50))
+    LessBone2 = morphology.remove_small_objects(LessBone,50000)
+    Bone = morphology.binary_dilation(LessBone2,morphology.disk(50))
+    PlotImage(Bone)
     Y, X = np.where(Bone)
 
     # Record time
@@ -225,21 +276,22 @@ def ExtractROIs(Array, N, Plot=False):
 
     return ROIs.astype('uint8')
 
-def PlotOverlay(ROI,Seg, Save=False, FileName=None):
+def PlotOverlay(ROI,Seg, FileName=None):
 
-    SegImage = np.zeros((Seg.shape[0], Seg.shape[1], 4))
+    H, W = Seg.shape
+    SegImage = np.zeros((H, W, 4))
 
-    Colors = [(1,0,0,1),(0,0,0,0),(0,0,1,0),(1,1,1,0)]
+    Colors = [(0,0,0,0),(1,0,0,0.25)]
     for iValue, Value in enumerate(np.unique(Seg)):
         Filter = Seg == Value
         SegImage[Filter] = Colors[iValue]
 
-    Figure, Axis = plt.subplots(1,1, figsize=(10,10))
+    Figure, Axis = plt.subplots(1,1, figsize=(H/100,W/100))
     Axis.imshow(ROI)
     Axis.imshow(SegImage, interpolation='none')
     Axis.axis('off')
     plt.subplots_adjust(0,0,1,1)
-    if Save:
+    if FileName:
         plt.savefig(FileName)
     plt.show()
 
@@ -348,19 +400,23 @@ def Main(Arguments):
 
     # Perform segmentation
     Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
-    Reference = io.imread(str(Path(Arguments.Path, 'Reference.png')))
+    # Reference = io.imread(str(Path(Arguments.Path, 'Reference.png')))
     S_ROIs = {}
     for Index, Name in enumerate(Pictures):
         Array = io.imread(str(Path(DataDirectory, Name)))
-        ROIs = ExtractROIs(Array, Arguments.N)
+        ROIs = ExtractROIs(Array, Arguments.N, Plot=True)
 
         for iROI, ROI in enumerate(ROIs):
-            E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
-            Features = ExtractFeatures(E_ROI)[0]
+            # E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
+            Features = ExtractFeatures(ROI)[0]
             S_ROI = future.predict_segmenter(Features, Classifier)
+            CL = S_ROI == 1
+            Results = morphology.remove_small_objects(CL, 200)
 
             # Save segmentation results
-            PlotOverlay(E_ROI,S_ROI)
+            FilePath = Path(Arguments.Path, 'SegmentationResults')
+            FileName = str(FilePath / str(Name + '_' + str(iROI) + '.png'))
+            PlotOverlay(ROI,Results,FileName)
 
             S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
             Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
@@ -373,18 +429,18 @@ def Main(Arguments):
             Data2Fit.loc[i, 'Donor'] = Data.loc[Index,'DonorID']
             Data2Fit.loc[i, 'Side'] = Data.loc[Index,'Side']
             Data2Fit.loc[i, 'Site'] = Data.loc[Index,'Site']
-            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(ROI)]
+            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(ROI + 1)]
             i += 1
 
     # Replace variables by numerical values
     Donors = Data2Fit['Donor'].unique()
     Data2Fit['Donor'] = Data2Fit['Donor'].replace(Donors, np.arange(len(Donors))+1)
-    Data2Fit['Site'] = Data2Fit['Site'].replace(['M', 'L'], [-1, 1])
+    Data2Fit['Side'] = Data2Fit['Side'].replace(['R', 'L'], [-1, 1])
     Data2Fit['Site'] = Data2Fit['Site'].replace(['M', 'L'], [-1, 1])
 
     # Perform statistical analysis
-    LME = smf.mixedlm('Density ~ Side + Site + Site*Side',
-                      # vc_formula={'Side': '0 + C(Side)'},
+    LME = smf.mixedlm('Density ~ Site',
+                      vc_formula={'Side': '0 + C(Side)'},
                       re_formula='1',
                       data=Data2Fit,
                       groups=Data2Fit['Donor']).fit(reml=True)
