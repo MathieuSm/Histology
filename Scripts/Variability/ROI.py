@@ -1,41 +1,27 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import time
-import joblib
 import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
-import statsmodels.formula.api as smf
-from skimage import io, future, exposure, morphology
-from statsmodels.regression.mixed_linear_model import MixedLMParams
+from skimage import io, morphology
 
 Version = '01'
 
 # Define the script description
 Description = """
-    This script runs the analysis of cement line densities of the test samples in the curse
-    of the FEXHIP project.
-    
-    It uses the random forest classification trained with manually segmented picture for the
-    segmentation of cement lines. 3 regions of interest (ROI) of 500 um side length are rand-
-    omly selected on each picture. Then, statistical comparisons between superior and infer-
-    ior side are performed.
-    
+    This script extract N regions of interest randomly and save them as well as their coordinates
+
     Author: Mathieu Simon
             ARTORG Center for Biomedical Engineering Research
             SITEM Insel
             University of Bern
-    
+
     Date: September 2022
     """
-
-# Import functions from other scripts
-sys.path.insert(0, str(Path.cwd() / 'Scripts' / 'Pipeline'))
-from RandomForest import ExtractFeatures
 
 def PrintTime(Tic, Toc):
     """
@@ -244,8 +230,6 @@ def ExtractROIs(Array, N, Plot=False):
                 break
 
         if Plot:
-            Xs[i] += [X1, X2]
-            Ys[i] += [Y1, Y2]
 
             Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
             Axis.imshow(ROIs[i])
@@ -255,7 +239,11 @@ def ExtractROIs(Array, N, Plot=False):
 
         # Store ROI and remove coordinates to no select the same
         if ROI:
+
             ROIs[i] += Array[Y1:Y2, X1:X2]
+            Xs[i] += [X1, X2]
+            Ys[i] += [Y1, Y2]
+
             XRemove = (FilteredX > X1) & (FilteredX < X2)
             YRemove = (FilteredY > Y1) & (FilteredY < Y2)
             FilteredX = FilteredX[~(XRemove & YRemove)]
@@ -280,119 +268,14 @@ def ExtractROIs(Array, N, Plot=False):
     PrintTime(Tic,Toc)
 
 
-    return ROIs.astype('uint8')
-
-def PlotOverlay(ROI,Seg, FileName=None):
-
-    H, W = Seg.shape
-    SegImage = np.zeros((H, W, 4))
-
-    Colors = [(1,0,0,0.25),(0,0,1,0.25),(0,1,0,0.25),(1,1,1,0.25)]
-    for iValue, Value in enumerate(np.unique(Seg)):
-        Filter = Seg == Value
-        SegImage[Filter] = Colors[iValue]
-
-    Figure, Axis = plt.subplots(1,1, figsize=(H/100,W/100))
-    Axis.imshow(ROI)
-    Axis.axis('off')
-    plt.subplots_adjust(0,0,1,1)
-    if FileName:
-        plt.savefig(FileName)
-    plt.show()
-
-    Figure, Axis = plt.subplots(1, 1, figsize=(H / 100, W / 100))
-    Axis.imshow(ROI)
-    Axis.imshow(SegImage, interpolation='none')
-    Axis.axis('off')
-    plt.subplots_adjust(0, 0, 1, 1)
-    if FileName:
-        plt.savefig(FileName[:-4] + '_Seg.png')
-    plt.show()
-
-# Perform linear mixed-effect fit
-def LMEFIT(DataFrame, Plot=True):
-
-    ColumnNames = DataFrame.columns
-    DataFrame.columns = ['X','Y','Group']
-
-    # Fit model
-    Model = smf.mixedlm('Y ~ X', groups=DataFrame['Group'], re_formula='~ X', data=DataFrame)
-    Free = MixedLMParams.from_components(fe_params=np.ones(2),
-                                         cov_re=np.eye(2))
-    FitResults = Model.fit(free=Free, method=['lbfgs'])
-    print(FitResults.summary())
-
-    # Calculate R^2, p-value, 95% CI, SE, N
-    Y_Obs = FitResults.model.endog
-    Y_Fit = FitResults.fittedvalues
-
-    E = Y_Obs - Y_Fit
-
-    N = int(FitResults.nobs)
-
-    CI_il = FitResults.conf_int()[0][0]
-    CI_ir = FitResults.conf_int()[1][0]
-    CI_l = FitResults.conf_int()[0][1]
-    CI_r = FitResults.conf_int()[1][1]
-
-    X_Raw = np.matrix(FitResults.model.exog)
-    X = np.unique(X_Raw,axis=0)
-    X_Obs = np.sort(np.array(X[:, 1]).reshape(len(X)))
-    C = np.matrix(FitResults.cov_params())[:X.shape[1],:X.shape[1]]
-    B_0 = np.sqrt(np.diag(np.abs(X * C * X.T)))
-    Alpha = 0.95
-    t_Alpha = t.interval(Alpha, N - X.shape[1] - 1)
-    Y_Pre = FitResults.predict(exog=X, transform=False)
-    CI_Line_u = Y_Pre + t_Alpha[0] * B_0
-    CI_Line_o = Y_Pre + t_Alpha[1] * B_0
-    Sorted_CI_u = CI_Line_u[np.argsort(X[:,1])]
-    Sorted_CI_o = CI_Line_o[np.argsort(X[:,1])]
-
-    NoteYPos = 0.925
-    NoteYShift = 0.075
-
-    Re = (FitResults.params * FitResults.scale)[2:]
-    Se = FitResults.resid.std(ddof=-1)
-
-    if Plot:
-        Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5))
-        for i, gData in enumerate(DataFrame.groupby('Group')):
-            Color = plt.cm.winter((int(i) + 1) / len(DataFrame.groupby('Group')))
-            Color = (Color[0], Color[1], Color[2], 0.5)
-            gData[1].plot(x='X', y='Y', ax=Axes, label=gData[0],
-                          color=Color, marker='o', fillstyle='none', linestyle='--', linewidth=1)
-        Axes.plot(X[:, 1], Y_Pre, color=(1, 0, 0), label='Fit', linewidth=2)
-        Axes.fill_between(X_Obs, Sorted_CI_o, Sorted_CI_u, color=(0, 0, 0), alpha=0.2,
-                          label=str(int(Alpha * 100)) + '% CI')
-        Axes.annotate('Intercept 95% CI [' + str(CI_il.round(2)) + r'$,$ ' + str(CI_ir.round(2)) + ']',
-                      xy=(0.05, NoteYPos), xycoords='axes fraction')
-        Axes.annotate('Slope 95% CI [' + str(CI_l.round(2)) + r'$,$ ' + str(CI_r.round(2)) + ']',
-                      xy=(0.05, NoteYPos - NoteYShift), xycoords='axes fraction')
-        Axes.annotate(r'$\sigma_{i}^2$ : ' + str(Re[0].round(3)), xy=(0.05, NoteYPos - NoteYShift * 2),
-                      xycoords='axes fraction')
-        Axes.annotate(r'$\sigma_{s}^2$ : ' + str(Re[2].round(3)), xy=(0.05, NoteYPos - NoteYShift * 3),
-                      xycoords='axes fraction')
-        Axes.annotate(r'$\sigma^2$ : ' + str(round(Se,2)), xy=(0.05, NoteYPos - NoteYShift * 4),
-                      xycoords='axes fraction')
-        DataFrame.columns = ColumnNames
-        Axes.set_ylabel(DataFrame.columns[1])
-        Axes.set_xlabel(DataFrame.columns[0])
-        plt.subplots_adjust(left=0.2, bottom=0.15)
-        plt.legend(loc='lower right',ncol=2)
-        plt.show()
-
-    # Add fitted values and residuals to data
-    DataFrame = pd.concat([DataFrame,pd.DataFrame(Y_Fit,columns=['Fitted Value'])], axis=1)
-    DataFrame = pd.concat([DataFrame,pd.DataFrame(E,columns=['Residuals'])], axis=1)
-
-    return DataFrame, FitResults
+    return ROIs.astype('uint8'), [Xs, Ys]
 
 # For testing purpose
 class ArgumentsClass:
 
     def __init__(self):
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
-        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Path = str(Path.cwd() / 'Scripts' / 'Variability' / 'ROIs')
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
@@ -411,78 +294,39 @@ def Main(Arguments):
         Data.loc[Index, 'DonorID'] = Name[:3]
         Data.loc[Index, 'Side'] = Name[3]
         Data.loc[Index, 'Site'] = Name[4]
+    Donors = Data['DonorID'].unique()
+    Sides = Data['Side'].unique()
+    Sites = Data['Site'].unique()
+    ROIs = np.arange(Arguments.N)+1
+    Indices = pd.MultiIndex.from_product([Donors,Sides,Sites,ROIs], names=['Donor ID', 'Side', 'Site', 'ROI Number'])
+    Data = pd.DataFrame(index=Indices, columns=['X1', 'X2', 'Y1', 'Y2'])
 
-    # Perform segmentation
-    Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
-    # Reference = io.imread(str(Path(Arguments.Path, 'Reference.png')))
-    S_ROIs = {}
+    # Perform ROI selection
+    FilePath = Path(Arguments.Path)
     for Index, Name in enumerate(Pictures):
         Array = io.imread(str(Path(DataDirectory, Name)))
-        ROIs = ExtractROIs(Array, Arguments.N, Plot=False)
+        ROIs, Coords = ExtractROIs(Array, Arguments.N, Plot=False)
 
         for iROI, ROI in enumerate(ROIs):
 
+            # Save ROI
             if ROI.sum() > 0:
-                # E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
-                Features = ExtractFeatures(ROI)[0]
-                S_ROI = future.predict_segmenter(Features, Classifier)
-                CL = S_ROI == 1
-                Results = morphology.remove_small_objects(CL, 200)
+                H, W = ROI.shape[:-1]
+                Figure, Axis = plt.subplots(1, 1, figsize=(H / 100, W / 100))
+                Axis.imshow(ROI)
+                Axis.axis('off')
+                plt.subplots_adjust(0, 0, 1, 1)
+                plt.savefig(str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png')))
+                plt.show()
 
-                # Save segmentation results
-                FilePath = Path(Arguments.Path, 'SegmentationResults')
-                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
-                # PlotOverlay(ROI,S_ROI,FileName)
+                Data.loc[Name[:3],Name[3],Name[4],iROI+1]['X1'] = Coords[0][iROI][0]
+                Data.loc[Name[:3],Name[3],Name[4],iROI+1]['X2'] = Coords[0][iROI][1]
+                Data.loc[Name[:3],Name[3],Name[4],iROI+1]['Y1'] = Coords[1][iROI][0]
+                Data.loc[Name[:3],Name[3],Name[4],iROI+1]['Y2'] = Coords[1][iROI][1]
 
-                S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
-                Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
+    # Save data frame
+    Data.dropna().to_csv(str(FilePath / 'Coordinates.csv'))
 
-    # Build data frame for analysis
-    Data2Fit = pd.DataFrame()
-    i = 0
-    for Index in Data.index:
-        for ROI in range(3):
-            Data2Fit.loc[i, 'Donor'] = Data.loc[Index,'DonorID']
-            Data2Fit.loc[i, 'Side'] = Data.loc[Index,'Side']
-            Data2Fit.loc[i, 'Site'] = Data.loc[Index,'Site']
-            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(ROI + 1)]
-            i += 1
-
-    # Replace variables by numerical values
-    Donors = Data2Fit['Donor'].unique()
-    Data2Fit['Donor'] = Data2Fit['Donor'].replace(Donors, np.arange(len(Donors))+1)
-    Data2Fit['Side'] = Data2Fit['Side'].replace(['R', 'L'], [-1, 1])
-    Data2Fit['Site'] = Data2Fit['Site'].replace(['M', 'L'], [-1, 1])
-    Data2Fit = Data2Fit.dropna()
-
-    # Plot data
-    Colors = [(0,0,0),(1,0,0),(0,0,1),(0,1,0)]
-    Marker = ['none', 'o', 'x']
-    Offset = []
-    Figure, Axis = plt.subplots(1,1)
-    for L1, G1 in Data2Fit.groupby('Donor'):
-        for L2, G2 in G1.groupby('Side'):
-            Axis.plot(G2['Site'],G2['Density'],color=Colors[L1],marker=Marker[L2], linestyle='none', fillstyle='none')
-    for i in range(len(Donors)):
-        Axis.plot([], color=Colors[i+1], label=Donors[i])
-    Axis.plot([], color=(0,0,0), marker=Marker[-1], linestyle='none', label='Right')
-    Axis.plot([], color=(0,0,0), marker=Marker[1], linestyle='none', label='Left', fillstyle='none')
-    Axis.set_xticks([-1, 1], ['Inferior', 'Superior'])
-    Axis.set_xlim([-2,2])
-    Axis.set_xlabel('Site (-)')
-    Axis.set_ylabel('Cement line density')
-    plt.legend(loc='upper center', ncol=3, bbox_to_anchor=(0.5,1.15), frameon=False)
-    plt.show()
-
-    # Perform statistical analysis
-    Model = smf.mixedlm('Density ~ Site',
-                      # vc_formula={'Side': '0 + Side'},
-                      re_formula='1',
-                      data=Data2Fit,
-                      groups=Data2Fit['Donor'])
-    Free = MixedLMParams.from_components(fe_params=np.ones(2),cov_re=np.eye(1))
-    LME = Model.fit(reml=True,free=Free)
-    print(LME.summary())
 
 if __name__ == '__main__':
     # Initiate the parser with a description
@@ -503,4 +347,3 @@ if __name__ == '__main__':
     Arguments = Parser.parse_args()
 
     Main(Arguments)
-
