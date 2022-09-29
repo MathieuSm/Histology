@@ -274,22 +274,20 @@ def Main(Arguments):
     # Extract picture features
     print('\nExtract manual segmentation features')
     Tic = time.time()
-    Reference = io.imread(str(Path(Arguments.Path, 'Reference.png')))
     for iPicture, Picture in enumerate(Pictures):
         ROI = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
         Seg_ROI = io.imread(str(Path(DataDirectory, Picture)))
-        E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
 
         if iPicture == 0:
             Label, Ticks = ExtractLabels(Seg_ROI, DilateCM=True)
-            Features, FNames = ExtractFeatures(E_ROI)
+            Features, FNames = ExtractFeatures(ROI)
 
             Features = Features[Label > 0]
             Label = Label[Label > 0]
 
         else:
             NewLabel = ExtractLabels(Seg_ROI)[0]
-            NewFeatures = ExtractFeatures(E_ROI)[0]
+            NewFeatures = ExtractFeatures(ROI)[0]
 
             Features = np.vstack([Features, NewFeatures[NewLabel > 0]])
             Label = np.concatenate([Label, NewLabel[NewLabel > 0]])

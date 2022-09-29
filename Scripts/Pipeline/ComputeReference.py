@@ -12,13 +12,8 @@ Version = '01'
 
 # Define the script description
 Description = """
-    This script runs the analysis of cement line densities of the test samples in the curse
-    of the FEXHIP project.
-
-    It uses the random forest classification trained with manually segmented picture for the
-    segmentation of cement lines. 3 regions of interest (ROI) of 500 um side length are rand-
-    omly selected on each picture. Then, statistical comparisons between superior and infer-
-    ior side are performed.
+    Script used to compute a mean histogram to which match ROIs previous to automatic segmentation.
+    The idea is to reduce the effect of different staining intensities
 
     Author: Mathieu Simon
             ARTORG Center for Biomedical Engineering Research
@@ -175,23 +170,24 @@ def Main(Arguments):
     Axis.bar(Bins[:-1] + Bins[1]/2, MeanHist[2], edgecolor=(0,0,1), color=(0,0,0,0), width=Bins[1])
     plt.show()
 
+    nPixels = MeanHist.sum(axis=1).max()
+    Width = np.ceil(np.sqrt(nPixels)).astype('int')
+    while np.mod(nPixels,Width):
+        Width += 1
+    Height = int(nPixels / Width)
+    Reference = np.ones((Height,Width,3),'int').ravel()
+
     Start = 0
     Stop = 0
-
-    nPixels = MeanHist.sum(axis=1).max()
-    SideLength = np.floor(np.sqrt(nPixels))
-    nPixels / (SideLength-10)
-
-    Reference = np.ones((1000,1000,3),'int').ravel()
     for i, nPixels in enumerate(MeanHist.ravel()):
         Stop += nPixels
         Reference[Start:Stop] = np.tile(Bins,3)[i].astype('int')
         Start = Stop
-    Reference = np.reshape(Reference,(1000,1000,3), order='F')
+    Reference = np.reshape(Reference,(Height,Width,3), order='F')
 
     FileName = str(Path(Arguments.Path) / 'Reference.png')
     H, W = Reference.shape[:-1]
-    Figure, Axis = plt.subplots(1, 1, figsize=(H / 100, W / 100))
+    Figure, Axis = plt.subplots(1, 1, figsize=(W / 500, H / 500))
     Axis.imshow(Reference)
     Axis.axis('off')
     plt.subplots_adjust(0, 0, 1, 1)

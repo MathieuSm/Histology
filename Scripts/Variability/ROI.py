@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
-from skimage import io, morphology
+from skimage import io, morphology, exposure, color
 
 Version = '01'
 
@@ -274,6 +274,7 @@ def ExtractROIs(Array, N, Plot=False):
 class ArgumentsClass:
 
     def __init__(self):
+        self.Ref = Path.cwd() / 'Scripts' / 'Pipeline'
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
         self.Path = str(Path.cwd() / 'Scripts' / 'Variability' / 'ROIs')
         self.N = 5

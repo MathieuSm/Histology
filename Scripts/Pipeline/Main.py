@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
-from skimage import io, future, exposure, morphology
+from skimage import io, future, exposure, morphology, measure
 from statsmodels.regression.mixed_linear_model import MixedLMParams
 
 Version = '01'
@@ -214,6 +214,7 @@ def ExtractROIs(Array, N, Plot=False):
 
     # Perform semi-random ROI selection
     ROIs = np.zeros((N,ROISize,ROISize,3)).astype('int')
+    BVTVs = np.zeros((N))
     Xs = np.zeros((N,2)).astype('int')
     Ys = np.zeros((N,2)).astype('int')
 
@@ -256,6 +257,7 @@ def ExtractROIs(Array, N, Plot=False):
         # Store ROI and remove coordinates to no select the same
         if ROI:
             ROIs[i] += Array[Y1:Y2, X1:X2]
+            BVTVs[i] = BVTV
             XRemove = (FilteredX > X1) & (FilteredX < X2)
             YRemove = (FilteredY > Y1) & (FilteredY < Y2)
             FilteredX = FilteredX[~(XRemove & YRemove)]
@@ -280,7 +282,7 @@ def ExtractROIs(Array, N, Plot=False):
     PrintTime(Tic,Toc)
 
 
-    return ROIs.astype('uint8')
+    return ROIs.astype('uint8'), BVTVs
 
 def PlotOverlay(ROI,Seg, FileName=None):
 
@@ -308,6 +310,18 @@ def PlotOverlay(ROI,Seg, FileName=None):
     if FileName:
         plt.savefig(FileName[:-4] + '_Seg.png')
     plt.show()
+
+def PlotImage(Array):
+
+    Figure, Axis = plt.subplots(1,1,figsize=(10,10))
+    if Array.shape[-1] == 3:
+        Axis.imshow(Array)
+    else:
+        Axis.imshow(Array, cmap='binary_r')
+    Axis.axis('off')
+    plt.subplots_adjust(0,0,1,1)
+    plt.show()
+
 
 # Perform linear mixed-effect fit
 def LMEFIT(DataFrame, Plot=True):
@@ -411,29 +425,63 @@ def Main(Arguments):
         Data.loc[Index, 'DonorID'] = Name[:3]
         Data.loc[Index, 'Side'] = Name[3]
         Data.loc[Index, 'Site'] = Name[4]
+    Donors = Data['DonorID'].unique()
+    Sides = Data['Side'].unique()
+    Sites = Data['Site'].unique()
+    ROIs = np.arange(Arguments.N) + 1
+    Indices = pd.MultiIndex.from_product([Donors, Sides, Sites, ROIs], names=['Donor ID', 'Side', 'Site', 'ROI Number'])
+    Data = pd.DataFrame(index=Indices, columns=['BV/TV', 'CLd', 'On', 'HCd', 'HCn'])
 
     # Perform segmentation
     Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
-    # Reference = io.imread(str(Path(Arguments.Path, 'Reference.png')))
     S_ROIs = {}
     for Index, Name in enumerate(Pictures):
         Array = io.imread(str(Path(DataDirectory, Name)))
-        ROIs = ExtractROIs(Array, Arguments.N, Plot=False)
+        ROIs, BVTVs = ExtractROIs(Array, Arguments.N, Plot=False)
 
         for iROI, ROI in enumerate(ROIs):
 
             if ROI.sum() > 0:
-                # E_ROI = exposure.match_histograms(ROI, Reference, multichannel=True)
                 Features = ExtractFeatures(ROI)[0]
                 S_ROI = future.predict_segmenter(Features, Classifier)
-                CL = S_ROI == 1
-                Results = morphology.remove_small_objects(CL, 200)
 
                 # Save segmentation results
                 FilePath = Path(Arguments.Path, 'SegmentationResults')
                 FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
-                # PlotOverlay(ROI,S_ROI,FileName)
+                PlotOverlay(ROI,S_ROI,FileName)
 
+                # Clean segmentation
+                IT = S_ROI == 2
+                IT = morphology.remove_small_objects(IT, 500)
+                IT = ~morphology.remove_small_objects(~IT, 50)
+                PlotImage(IT)
+
+                HC = morphology.binary_erosion(~IT,morphology.disk(12))
+                HC = morphology.binary_dilation(HC,morphology.disk(12))
+                PlotImage(HC)
+
+                CL = S_ROI == 1
+                CL = morphology.binary_dilation(CL, morphology.disk(2))
+                CL = morphology.remove_small_objects(CL,600)
+                CL = morphology.binary_erosion(CL,morphology.disk(2))
+                PlotImage(CL)
+
+                OC = S_ROI == 3
+                OC = morphology.binary_erosion(OC, morphology.disk(2))
+                OC = morphology.binary_dilation(OC, morphology.disk(2))
+                OC = morphology.remove_small_objects(OC, 50)
+                PlotImage(OC)
+
+                Results = np.ones(S_ROI.shape) * 2
+                Results[OC] = 3
+                Results[CL] = 1
+                Results[HC] = 4
+                PlotOverlay(ROI,Results)
+
+
+
+                # Store results in data frame
+                Data.loc[Name[:3], Name[3], Name[4], str(iROI+1)]['BV/TV'] = BVTVs[iROI]
                 S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
                 Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
 
@@ -441,11 +489,11 @@ def Main(Arguments):
     Data2Fit = pd.DataFrame()
     i = 0
     for Index in Data.index:
-        for ROI in range(3):
+        for iROI in range(3):
             Data2Fit.loc[i, 'Donor'] = Data.loc[Index,'DonorID']
             Data2Fit.loc[i, 'Side'] = Data.loc[Index,'Side']
             Data2Fit.loc[i, 'Site'] = Data.loc[Index,'Site']
-            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(ROI + 1)]
+            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(iROI + 1)]
             i += 1
 
     # Replace variables by numerical values
