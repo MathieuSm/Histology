@@ -199,7 +199,7 @@ def ExtractROIs(Array, N, Plot=False):
     print('\nBegin ' + str(N) + ' ROIs extraction ...')
 
     # Set ROI pixel size
-    ROISize = int(round(Arguments.ROI_S / Arguments.Pixel_S))
+    ROISize = int(round(Arguments.ROI_S / Arguments.Pixel_S)) + Arguments.Margin
 
     # Filter positions too close to the border
     F1 = X > ROISize / 2
@@ -322,6 +322,36 @@ def PlotImage(Array):
     plt.subplots_adjust(0,0,1,1)
     plt.show()
 
+def PlotData(Data, Donors, Sides):
+
+    Colors = {Donors[0]: (1, 0, 0),
+              Donors[1]: (0, 0, 1),
+              Donors[2]: (0, 1, 0)}
+    Marker = {Sides[0]: 'o',
+              Sides[1]: 'x'}
+
+    for Variable in Data.columns:
+        Figure, Axis = plt.subplots(1, 1)
+        i = 0
+        for L1, G1 in Data.groupby('Site'):
+            for L2, G2 in G1.groupby('Side'):
+                if i == 1:
+                    Axis.plot([], color=(0, 0, 0), marker=Marker[L2], linestyle='none', fillstyle='none', label=L2)
+                for L3, G3 in G2.groupby('Donor ID'):
+                    x, y = np.ones(len(G3)) * i, G3[Variable].values
+                    Axis.plot(x, y, color=Colors[L3], marker=Marker[L2], linestyle='none', fillstyle='none')
+            i += 1
+        for iD, D in enumerate(Donors):
+            Axis.plot([], color=Colors[D], label=Donors[iD])
+        Axis.set_xticks([0, 1], ['Inferior', 'Superior'])
+        Axis.set_xlim([-1, 2])
+        Axis.set_xlabel('Site (-)')
+        Axis.set_ylabel(Variable)
+        plt.subplots_adjust(0.15, 0.15, 0.8, 0.9)
+        plt.legend(loc='center right', ncol=1, bbox_to_anchor=(1.3, 0.5), frameon=False)
+        plt.show()
+
+    return
 
 # Perform linear mixed-effect fit
 def LMEFIT(DataFrame, Plot=True):
@@ -410,6 +440,8 @@ class ArgumentsClass:
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
+        # Add margin to ROI to minimize border effects in morphological operations
+        self.Margin = 50
 Arguments = ArgumentsClass()
 
 def Main(Arguments):
@@ -430,11 +462,10 @@ def Main(Arguments):
     Sites = Data['Site'].unique()
     ROIs = np.arange(Arguments.N) + 1
     Indices = pd.MultiIndex.from_product([Donors, Sides, Sites, ROIs], names=['Donor ID', 'Side', 'Site', 'ROI Number'])
-    Data = pd.DataFrame(index=Indices, columns=['BV/TV', 'CLd', 'On', 'HCd', 'HCn'])
+    Data = pd.DataFrame(index=Indices, columns=['BV/TV', 'CLd', 'On', 'HCn', 'HCd', 'HCa'])
 
     # Perform segmentation
     Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
-    S_ROIs = {}
     for Index, Name in enumerate(Pictures):
         Array = io.imread(str(Path(DataDirectory, Name)))
         ROIs, BVTVs = ExtractROIs(Array, Arguments.N, Plot=False)
@@ -445,89 +476,80 @@ def Main(Arguments):
                 Features = ExtractFeatures(ROI)[0]
                 S_ROI = future.predict_segmenter(Features, Classifier)
 
-                # Save segmentation results
-                FilePath = Path(Arguments.Path, 'SegmentationResults')
-                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
-                PlotOverlay(ROI,S_ROI,FileName)
+                # Crop margin
+                M = int(Arguments.Margin / 2)
+                ROI = ROI[M:-M, M:-M]
+
+                # # Save segmentation results
+                # FilePath = Path(Arguments.Path, 'SegmentationResults')
+                # FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
+                # PlotOverlay(ROI,S_ROI[M:-M, M:-M],FileName)
 
                 # Clean segmentation
                 IT = S_ROI == 2
                 IT = morphology.remove_small_objects(IT, 500)
                 IT = ~morphology.remove_small_objects(~IT, 50)
-                PlotImage(IT)
+                # PlotImage(IT)
 
                 HC = morphology.binary_erosion(~IT,morphology.disk(12))
                 HC = morphology.binary_dilation(HC,morphology.disk(12))
-                PlotImage(HC)
+                # PlotImage(HC)
 
                 CL = S_ROI == 1
-                CL = morphology.binary_dilation(CL, morphology.disk(2))
-                CL = morphology.remove_small_objects(CL,600)
-                CL = morphology.binary_erosion(CL,morphology.disk(2))
-                PlotImage(CL)
+                CL = morphology.binary_dilation(CL, morphology.disk(3))
+                CL = morphology.remove_small_objects(CL,1000)
+                CL = morphology.binary_erosion(CL,morphology.disk(3))
+                # PlotImage(CL)
 
                 OC = S_ROI == 3
                 OC = morphology.binary_erosion(OC, morphology.disk(2))
                 OC = morphology.binary_dilation(OC, morphology.disk(2))
-                OC = morphology.remove_small_objects(OC, 50)
-                PlotImage(OC)
+                OC = morphology.remove_small_objects(OC, 25)
+                # PlotImage(OC)
 
                 Results = np.ones(S_ROI.shape) * 2
                 Results[OC] = 3
                 Results[CL] = 1
                 Results[HC] = 4
-                PlotOverlay(ROI,Results)
+                Results = Results[M:-M,M:-M]
+
+                # Save segmentation results
+                FilePath = Path(Arguments.Path, 'SegmentationResults')
+                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
+                PlotOverlay(ROI,Results,FileName)
+
+                # Compute different variables
+                On = np.max(measure.label(Results == 3))
+                HCl = measure.label(Results == 4)
+                HCn = np.max(HCl)
+                Properties = ['equivalent_diameter', 'major_axis_length', 'minor_axis_length']
+                HCp = pd.DataFrame(measure.regionprops_table(HCl,properties=Properties))
+                HCp['Anisotropy'] = HCp['major_axis_length'] / HCp['minor_axis_length']
 
 
 
                 # Store results in data frame
-                Data.loc[Name[:3], Name[3], Name[4], str(iROI+1)]['BV/TV'] = BVTVs[iROI]
-                S_ROIs[Name[:-4] + ' ' + str(iROI + 1)] = S_ROI
-                Data.loc[Index,'ROI ' + str(iROI + 1)] = np.sum(S_ROI == 1) / S_ROI.size
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['BV/TV'] = BVTVs[iROI]
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['CLd'] = np.sum(Results == 1) / ROI.size
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['On'] = On
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCn'] = HCn
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCd'] = HCp['equivalent_diameter'].mean()
+                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCa'] = HCp['Anisotropy'].mean()
+    Data = Data.dropna()
 
-    # Build data frame for analysis
-    Data2Fit = pd.DataFrame()
-    i = 0
-    for Index in Data.index:
-        for iROI in range(3):
-            Data2Fit.loc[i, 'Donor'] = Data.loc[Index,'DonorID']
-            Data2Fit.loc[i, 'Side'] = Data.loc[Index,'Side']
-            Data2Fit.loc[i, 'Site'] = Data.loc[Index,'Site']
-            Data2Fit.loc[i, 'Density'] = Data.loc[Index,'ROI ' + str(iROI + 1)]
-            i += 1
-
-    # Replace variables by numerical values
-    Donors = Data2Fit['Donor'].unique()
-    Data2Fit['Donor'] = Data2Fit['Donor'].replace(Donors, np.arange(len(Donors))+1)
-    Data2Fit['Side'] = Data2Fit['Side'].replace(['R', 'L'], [-1, 1])
-    Data2Fit['Site'] = Data2Fit['Site'].replace(['M', 'L'], [-1, 1])
-    Data2Fit = Data2Fit.dropna()
 
     # Plot data
-    Colors = [(0,0,0),(1,0,0),(0,0,1),(0,1,0)]
-    Marker = ['none', 'o', 'x']
-    Offset = []
-    Figure, Axis = plt.subplots(1,1)
-    for L1, G1 in Data2Fit.groupby('Donor'):
-        for L2, G2 in G1.groupby('Side'):
-            Axis.plot(G2['Site'],G2['Density'],color=Colors[L1],marker=Marker[L2], linestyle='none', fillstyle='none')
-    for i in range(len(Donors)):
-        Axis.plot([], color=Colors[i+1], label=Donors[i])
-    Axis.plot([], color=(0,0,0), marker=Marker[-1], linestyle='none', label='Right')
-    Axis.plot([], color=(0,0,0), marker=Marker[1], linestyle='none', label='Left', fillstyle='none')
-    Axis.set_xticks([-1, 1], ['Inferior', 'Superior'])
-    Axis.set_xlim([-2,2])
-    Axis.set_xlabel('Site (-)')
-    Axis.set_ylabel('Cement line density')
-    plt.legend(loc='upper center', ncol=3, bbox_to_anchor=(0.5,1.15), frameon=False)
-    plt.show()
+    PlotData(Data, Donors, Sides)
 
     # Perform statistical analysis
-    Model = smf.mixedlm('Density ~ Site',
+    Data2Fit = Data.reset_index()
+    Data2Fit['CLd'] = Data2Fit['CLd'].astype('float')
+
+    Model = smf.mixedlm('CLd ~ Site',
                       # vc_formula={'Side': '0 + Side'},
                       re_formula='1',
                       data=Data2Fit,
-                      groups=Data2Fit['Donor'])
+                      groups=Data2Fit['Donor ID'])
     Free = MixedLMParams.from_components(fe_params=np.ones(2),cov_re=np.eye(1))
     LME = Model.fit(reml=True,free=Free)
     print(LME.summary())
