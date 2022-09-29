@@ -440,8 +440,10 @@ class ArgumentsClass:
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
-        # Add margin to ROI to minimize border effects in morphological operations
-        self.Margin = 50
+
+        # Add margin to ROI to minimize border effects in cleaning morphological operations
+        self.Clean = True
+        self.Margin = 100
 Arguments = ArgumentsClass()
 
 def Main(Arguments):
@@ -480,52 +482,65 @@ def Main(Arguments):
                 M = int(Arguments.Margin / 2)
                 ROI = ROI[M:-M, M:-M]
 
-                # # Save segmentation results
-                # FilePath = Path(Arguments.Path, 'SegmentationResults')
-                # FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
-                # PlotOverlay(ROI,S_ROI[M:-M, M:-M],FileName)
-
-                # Clean segmentation
-                IT = S_ROI == 2
-                IT = morphology.remove_small_objects(IT, 500)
-                IT = ~morphology.remove_small_objects(~IT, 50)
-                # PlotImage(IT)
-
-                HC = morphology.binary_erosion(~IT,morphology.disk(12))
-                HC = morphology.binary_dilation(HC,morphology.disk(12))
-                # PlotImage(HC)
-
-                CL = S_ROI == 1
-                CL = morphology.binary_dilation(CL, morphology.disk(3))
-                CL = morphology.remove_small_objects(CL,1000)
-                CL = morphology.binary_erosion(CL,morphology.disk(3))
-                # PlotImage(CL)
-
-                OC = S_ROI == 3
-                OC = morphology.binary_erosion(OC, morphology.disk(2))
-                OC = morphology.binary_dilation(OC, morphology.disk(2))
-                OC = morphology.remove_small_objects(OC, 25)
-                # PlotImage(OC)
-
-                Results = np.ones(S_ROI.shape) * 2
-                Results[OC] = 3
-                Results[CL] = 1
-                Results[HC] = 4
-                Results = Results[M:-M,M:-M]
-
-                # Save segmentation results
+                # File for saving image
                 FilePath = Path(Arguments.Path, 'SegmentationResults')
-                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI+1) + '.png'))
-                PlotOverlay(ROI,Results,FileName)
+                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI + 1) + '.png'))
+
+                if Arguments.Clean:
+
+                    PlotOverlay(ROI, S_ROI[M:-M, M:-M])
+
+                    # Clean segmentation
+                    HCl = measure.label(S_ROI == 4)
+                    HCp = pd.DataFrame(measure.regionprops_table(HCl, properties=['equivalent_diameter']))
+                    HCp = HCp[HCp['equivalent_diameter'] > 30]
+                    HC = np.zeros(S_ROI.shape,'bool')
+                    for i in HCp.index:
+                        HC += morphology.binary_closing(HCl == i+1, morphology.disk(25))
+                    # PlotImage(HC)
+
+                    # # Clean segmentation
+                    # HC = S_ROI == 2
+                    # HC = morphology.binary_dilation(HC,morphology.disk(5))
+                    # HC = morphology.remove_small_objects(HC, 500)
+                    # HC = ~morphology.remove_small_objects(~HC, 600)
+                    # HC = morphology.binary_closing(~HC,morphology.disk(25))
+                    # # PlotImage(HC)
+
+                    CL = S_ROI == 1
+                    CL = morphology.binary_dilation(CL, morphology.disk(3))
+                    CL = morphology.remove_small_objects(CL,1000)
+                    CL = morphology.binary_erosion(CL,morphology.disk(3))
+                    # PlotImage(~CL)
+
+                    OC = S_ROI == 3
+                    OC = morphology.binary_erosion(OC, morphology.disk(2))
+                    OC = morphology.binary_dilation(OC, morphology.disk(2))
+                    OC = morphology.remove_small_objects(OC, 25)
+                    # PlotImage(OC)
+
+                    Results = np.ones(S_ROI.shape) * 2
+                    Results[OC] = 3
+                    Results[CL] = 1
+                    Results[HC] = 4
+                    Results = Results[M:-M,M:-M]
+
+                    # Save segmentation results
+                    PlotOverlay(ROI,Results,FileName)
+
+                else:
+
+                    Results = S_ROI[M:-M, M:-M]
+                    PlotOverlay(ROI, Results, FileName)
 
                 # Compute different variables
                 On = np.max(measure.label(Results == 3))
                 HCl = measure.label(Results == 4)
-                HCn = np.max(HCl)
                 Properties = ['equivalent_diameter', 'major_axis_length', 'minor_axis_length']
-                HCp = pd.DataFrame(measure.regionprops_table(HCl,properties=Properties))
+                HCp = pd.DataFrame(measure.regionprops_table(HCl, properties=Properties))
+                HCp = HCp[HCp['equivalent_diameter'] > 30]
+                HCn = len(HCp)
                 HCp['Anisotropy'] = HCp['major_axis_length'] / HCp['minor_axis_length']
-
 
 
                 # Store results in data frame
@@ -535,7 +550,7 @@ def Main(Arguments):
                 Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCn'] = HCn
                 Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCd'] = HCp['equivalent_diameter'].mean()
                 Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCa'] = HCp['Anisotropy'].mean()
-    Data = Data.dropna()
+    Data = Data.dropna().astype('float')
 
 
     # Plot data
@@ -543,7 +558,6 @@ def Main(Arguments):
 
     # Perform statistical analysis
     Data2Fit = Data.reset_index()
-    Data2Fit['CLd'] = Data2Fit['CLd'].astype('float')
 
     Model = smf.mixedlm('CLd ~ Site',
                       # vc_formula={'Side': '0 + Side'},
