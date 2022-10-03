@@ -402,7 +402,7 @@ PlotArray(Stretched,'Output')
 
 
 Figure, Axes = plt.subplots(1, 1, figsize=(5.5, 4.5), dpi=100)
-Axes.hist(Input.flatten(), bins=np.arange(0,256), density=True, color=(0,0,1), label='Original')
+Axes.hist(Input.flatten()*255, bins=np.arange(0,256), density=True, color=(0,0,1), label='Original')
 Axes.hist(Stretched.flatten(), bins=np.arange(0,256), density=True, color=(1,0,0), label='Enhanced')
 plt.legend(loc='upper left')
 plt.tight_layout()
