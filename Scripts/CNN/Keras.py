@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from keras.models import Sequential
 from sklearn.ensemble import RandomForestClassifier
 from skimage import io, transform, morphology, color
-from keras.layers import Conv2D, Flatten, MaxPooling2D, BatchNormalization
+from keras import layers, Model
 
 import pickle
 
@@ -77,6 +77,57 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
         plt.show()
 
     return Label, Ticks
+def FeatureExtractor(Filters):
+
+    Activation = 'sigmoid'
+    FeatExt = Sequential()
+
+    Layer = layers.Conv2D(Filters[0], 3, activation=Activation, padding='same', input_shape=(Arguments.Size, Arguments.Size, 3))
+    FeatExt.add(Layer)
+    Layer = layers.Conv2D(Filters[0], 3, activation=Activation, padding='same', kernel_initializer='he_uniform')
+    FeatExt.add(Layer)
+
+    for Layer in FeatExt.layers:
+        Layer.trainable = False
+
+    print(FeatExt.summary())
+
+    return FeatExt
+def Unet(Filters):
+
+    Activation = 'sigmoid'
+
+    ConLayers = []
+
+    Input = layers.Input(shape=(Arguments.Size, Arguments.Size, 3))
+    Layer = layers.Conv2D(Filters[0], 3, activation=Activation, padding='same')(Input)
+    Layer = layers.Conv2D(Filters[0], 3, activation=Activation, padding='same')(Layer)
+    Pool = layers.MaxPool2D(2)(Layer)
+    ConLayers.append([Layer,Pool])
+
+    for Filter in Filters[1:-1]:
+        Layer = layers.Conv2D(Filter, 3, activation=Activation, padding='same')(Pool)
+        Layer = layers.Conv2D(Filter, 3, activation=Activation, padding='same')(Layer)
+        Pool = layers.MaxPool2D(2)(Layer)
+        ConLayers.append([Layer, Pool])
+
+    Layer = layers.Conv2D(Filter*2, 3, activation=Activation, padding='same')(Pool)
+    Layer = layers.Conv2D(Filter*2, 3, activation=Activation, padding='same')(Layer)
+
+    for i in np.arange(len(Filters)-1)+1:
+        Layer = layers.Conv2DTranspose(Filters[-i], 3, 2, padding="same")(Layer)
+        Layer = layers.concatenate([Layer, ConLayers[-i][0]])
+        Layer = layers.Conv2D(Filters[-i], 3, activation=Activation, padding='same')(Layer)
+        Layer = layers.Conv2D(Filters[-i], 3, activation=Activation, padding='same')(Layer)
+
+    # outputs
+    Outputs = layers.Conv2D(Filters[0], 1, padding="same", activation="softmax")(Layer)
+
+    UNetModel = Model(Input, Outputs, name="U-Net")
+    UNetModel.trainable = False
+    print(UNetModel.summary())
+
+    return UNetModel
 def PlotConfusionMatrix(GroundTruth, Results, Ticks):
 
     CM = metrics.confusion_matrix(GroundTruth, Results, normalize=None)
@@ -137,7 +188,7 @@ class ArgumentsClass:
     def __init__(self):
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
         self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
-        self.Size = 1912
+        self.Size = 1024
 Arguments = ArgumentsClass()
 
 # List manually segmented pictures
@@ -182,11 +233,8 @@ Image = transform.resize(Image, (Arguments.Size, Arguments.Size), order=0, prese
 TestLabel += Image
 
 
-Activation = 'sigmoid'
-FeatureExtractor = Sequential()
-FeatureExtractor.add(Conv2D(32, 3, activation=Activation, padding='same', input_shape=(Arguments.Size, Arguments.Size, 3)))
-FeatureExtractor.add(Conv2D(32, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
-FeatureExtractor.add(Conv2D(64, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
+FeatExt = FeatureExtractor(2**np.arange(5,10))
+FeatExt = Unet(2**np.arange(5,10))
 # feature_extractor.add(BatchNormalization())
 #
 # FeatureExtractor.add(Conv2D(64, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
@@ -195,9 +243,9 @@ FeatureExtractor.add(Conv2D(64, 3, activation=Activation, padding='same', kernel
 # FeatureExtractor.add(Flatten())
 
 print('Extract features')
-X1 = FeatureExtractor.predict(Train)
+X1 = FeatExt.predict(Train)
 X1 = X1.reshape(-1, X1.shape[3])
-X2 = FeatureExtractor.predict(HSV)
+X2 = FeatExt.predict(HSV)
 X2 = X2.reshape(-1, X2.shape[3])
 Data = pd.DataFrame(np.hstack([X1,X2]))
 
@@ -208,12 +256,13 @@ Data['Label'] = Y
 print(Data['Label'].unique())
 print(Data['Label'].value_counts())
 Data = Data[Data['Label'] != 0]
+print(Data['Label'].value_counts())
 
 Features = Data.drop(labels=['Label'], axis=1)
 Labels = Data['Label']
 
 
-Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.5, class_weight='balanced')
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.3, class_weight='balanced')
 Tic = time.time()
 Classifier.fit(Features, Labels)
 Toc = time.time()
@@ -227,9 +276,9 @@ CM = PlotConfusionMatrix(Labels, Results, Ticks)
 Report = metrics.classification_report(Labels.ravel(),Results.ravel())
 print(Report)
 
-TX1 = FeatureExtractor.predict(Test)
+TX1 = FeatExt.predict(Test)
 TX1 = TX1.reshape(-1, TX1.shape[3])
-TX2 = FeatureExtractor.predict(THSV)
+TX2 = FeatExt.predict(THSV)
 TX2 = TX2.reshape(-1, TX2.shape[3])
 TestFeatures = np.hstack([TX1,TX2])
 
