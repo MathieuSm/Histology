@@ -3,105 +3,239 @@
 """
 @author: Sreenivas Bhattiprolu
 """
-
+import os
+import time
 import numpy as np
 import pandas as pd
+from pathlib import Path
+from sklearn import metrics
 import matplotlib.pyplot as plt
-import glob
-import cv2
+from keras.models import Sequential
+from sklearn.ensemble import RandomForestClassifier
+from skimage import io, transform, morphology, color
+from keras.layers import Conv2D, Flatten, MaxPooling2D, BatchNormalization
+
 import pickle
 
-from keras.models import Sequential
-from keras.layers import Conv2D
-import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-print(os.listdir("images/"))
+def PrintTime(Tic, Toc):
+    """
+    Print elapsed time in seconds to time in HH:MM:SS format
+    :param Tic: Actual time at the beginning of the process
+    :param Toc: Actual time at the end of the process
+    """
 
-SIZE = 512  # Resize images
+    Delta = Toc - Tic
 
-train_images = []
+    Hours = np.floor(Delta / 60 / 60)
+    Minutes = np.floor(Delta / 60) - 60 * Hours
+    Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
 
-for directory_path in glob.glob("images/train_images"):
-    for img_path in glob.glob(os.path.join(directory_path, "*.tif")):
-        img = cv2.imread(img_path, cv2.IMREAD_COLOR)
-        img = cv2.resize(img, (SIZE, SIZE))
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        train_images.append(img)
-        # train_labels.append(label)
+    print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+def ExtractLabels(Seg, DilateCM=False, Plot=True):
 
-train_images = np.array(train_images)
+    # Extract segments
+    CL = Seg[:, :, 0] == 255
+    OC = Seg[:, :, 1] == 255
+    HC = CL * OC
 
-train_masks = []
-for directory_path in glob.glob("images/train_masks"):
-    for mask_path in glob.glob(os.path.join(directory_path, "*.tif")):
-        mask = cv2.imread(mask_path, 0)
-        mask = cv2.resize(mask, (SIZE, SIZE))
-        # mask = cv2.cvtColor(mask, cv2.COLOR_RGB2BGR)
-        train_masks.append(mask)
-        # train_labels.append(label)
+    # Label cement lines segments
+    Label = np.zeros(HC.shape, 'uint8')
+    Label[CL] = 1
+    Label[HC] = 0
 
-train_masks = np.array(train_masks)
+    if DilateCM == True:
+        Label = morphology.binary_dilation(Label, morphology.disk(1)) * 1
 
-X_train = train_images
-y_train = train_masks
-y_train = np.expand_dims(y_train, axis=3)
+    # Select random pixels for tissue
+    Coordinates = np.argwhere(~Label)
+    np.random.shuffle(Coordinates)
+    Pixels = Coordinates[:np.bincount(Label.ravel())[-1]]
+    Label = Label * 1
+    Label[Pixels[:, 0], Pixels[:, 1]] = 2
 
-activation = 'sigmoid'
-feature_extractor = Sequential()
-feature_extractor.add(Conv2D(32, 3, activation=activation, padding='same', input_shape=(SIZE, SIZE, 3)))
-feature_extractor.add(Conv2D(32, 3, activation=activation, padding='same', kernel_initializer='he_uniform'))
+    # Label osteocytes and Harvesian canals
+    Label[OC] = 3
+    Label[HC] = 4
 
-# feature_extractor.add(Conv2D(64, 3, activation = activation, padding = 'same', kernel_initializer = 'he_uniform'))
+    Ticks = ['CL', 'IT', 'OC', 'HC']
+
+    if Plot:
+        Image = np.zeros((Seg.shape[0], Seg.shape[1], 3))
+
+        Colors = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1)]
+        for iValue, Value in enumerate(np.unique(Label)):
+            Filter = Label == Value
+            Image[Filter] = Colors[iValue]
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(10, 10))
+        Axis.imshow(Image)
+        Axis.plot([], color=(1, 0, 0), lw=1, label='Segmentation')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    return Label, Ticks
+def PlotConfusionMatrix(GroundTruth, Results, Ticks):
+
+    CM = metrics.confusion_matrix(GroundTruth, Results, normalize=None)
+    CM2 = metrics.confusion_matrix(GroundTruth, Results, normalize='true')
+    CM3 = metrics.confusion_matrix(GroundTruth, Results, normalize='pred')
+    VSpace = 0.2
+
+    Figure, Axis = plt.subplots(1, 1, figsize=(5.5, 4.5))
+    Axis.matshow(CM3, cmap='binary', alpha=0.33)
+    for Row in range(CM.shape[0]):
+        for Column in range(CM.shape[1]):
+            Axis.text(x=Row, y=Column, position=(Row, Column), va='center', ha='center', s=CM[Row, Column])
+            Axis.text(x=Row, y=Column, position=(Row, Column + VSpace), va='center', ha='center',
+                      s=round(CM2[Row, Column], 2), color=(0, 0, 1))
+            Axis.text(x=Row, y=Column, position=(Row, Column - VSpace), va='center', ha='center',
+                      s=round(CM3[Row, Column], 2), color=(1, 0, 0))
+    Axis.xaxis.set_ticks_position('bottom')
+    Axis.set_xticks(np.arange(len(Ticks)), Ticks)
+    Axis.set_yticks(np.arange(len(Ticks)), Ticks)
+    Axis.set_ylim([-0.49, CM.shape[0] - 0.5])
+    Axis.set_title('Total: ' + str(GroundTruth[GroundTruth > 0].size))
+    Axis.set_xlabel('Ground Truth', color=(0, 0, 1))
+    Axis.set_ylabel('Predictions', color=(1, 0, 0))
+    plt.show()
+
+    return CM
+def PlotOverlay(ROI,Seg, FileName=None):
+
+    H, W = Seg.shape
+    SegImage = np.zeros((H, W, 4))
+
+    Colors = [(1,0,0,0.25),(0,0,1,0.25),(0,1,0,0.25),(1,1,1,0.25)]
+    for iValue, Value in enumerate(np.unique(Seg)):
+        Filter = Seg == Value
+        SegImage[Filter] = Colors[iValue]
+
+    Figure, Axis = plt.subplots(1,1, figsize=(H/100,W/100))
+    Axis.imshow(ROI)
+    Axis.axis('off')
+    plt.subplots_adjust(0,0,1,1)
+    if FileName:
+        plt.savefig(FileName)
+    plt.show()
+
+    Figure, Axis = plt.subplots(1, 1, figsize=(H / 100, W / 100))
+    Axis.imshow(ROI)
+    Axis.imshow(SegImage, interpolation='none')
+    Axis.axis('off')
+    plt.subplots_adjust(0, 0, 1, 1)
+    if FileName:
+        plt.savefig(FileName[:-4] + '_Seg.png')
+    plt.show()
+
+
+# For testing purpose
+class ArgumentsClass:
+
+    def __init__(self):
+        self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
+        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Size = 1912
+Arguments = ArgumentsClass()
+
+# List manually segmented pictures
+DataDirectory = str(Path(Arguments.Path, 'ManualSegmentation'))
+Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
+Pictures.sort()
+
+# Store train images and label
+Train = []
+Labels = []
+HSV = []
+for iPicture, Picture in enumerate(Pictures[:-1]):
+    Image = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
+    Image = transform.resize(Image,(Arguments.Size,Arguments.Size,3),anti_aliasing=True)
+    Train.append(Image)
+    HSV.append(color.rgb2hsv(Image))
+
+    Image = io.imread(str(Path(DataDirectory, Picture)))
+    Image, Ticks = ExtractLabels(Image, DilateCM=bool(1-iPicture))
+    # Image = (Image == 1) * 1
+    Image = transform.resize(Image, (Arguments.Size, Arguments.Size, 1), order=0, preserve_range=True)
+    Labels.append(Image.astype('int'))
+Train = np.array(Train)
+HSV = np.array(HSV)
+Labels = np.array(Labels)
+
+Figure, Axis = plt.subplots(1,1)
+Axis.imshow(Labels[0])
+plt.show()
+
+
+# Store test image
+Test = np.zeros((1,Arguments.Size,Arguments.Size,3))
+Image = io.imread(str(Path(DataDirectory, Pictures[-1][:-8] + '.png')))
+Image = transform.resize(Image,(Arguments.Size,Arguments.Size,3),anti_aliasing=True)
+Test += Image
+THSV = np.expand_dims(color.rgb2hsv(Image),0)
+TestLabel = np.zeros((Arguments.Size,Arguments.Size))
+Image = io.imread(str(Path(DataDirectory, Pictures[-1])))
+Image = ExtractLabels(Image, DilateCM=False)[0]
+Image = transform.resize(Image, (Arguments.Size, Arguments.Size), order=0, preserve_range=True)
+TestLabel += Image
+
+
+Activation = 'sigmoid'
+FeatureExtractor = Sequential()
+FeatureExtractor.add(Conv2D(32, 3, activation=Activation, padding='same', input_shape=(Arguments.Size, Arguments.Size, 3)))
+FeatureExtractor.add(Conv2D(32, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
+FeatureExtractor.add(Conv2D(64, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
 # feature_extractor.add(BatchNormalization())
 #
-# feature_extractor.add(Conv2D(64, 3, activation = activation, padding = 'same', kernel_initializer = 'he_uniform'))
-# feature_extractor.add(BatchNormalization())
-# feature_extractor.add(MaxPooling2D())
-# feature_extractor.add(Flatten())
+# FeatureExtractor.add(Conv2D(64, 3, activation=Activation, padding='same', kernel_initializer='he_uniform'))
+# FeatureExtractor.add(BatchNormalization())
+# FeatureExtractor.add(MaxPooling2D())
+# FeatureExtractor.add(Flatten())
 
-X = feature_extractor.predict(X_train)
+print('Extract features')
+X1 = FeatureExtractor.predict(Train)
+X1 = X1.reshape(-1, X1.shape[3])
+X2 = FeatureExtractor.predict(HSV)
+X2 = X2.reshape(-1, X2.shape[3])
+Data = pd.DataFrame(np.hstack([X1,X2]))
 
-X = X.reshape(-1, X.shape[3])
 
-Y = y_train.reshape(-1)
+Y = Labels.reshape(-1)
+Data['Label'] = Y
 
-dataset = pd.DataFrame(X)
-dataset['Label'] = Y
-print(dataset['Label'].unique())
-print(dataset['Label'].value_counts())
+print(Data['Label'].unique())
+print(Data['Label'].value_counts())
+Data = Data[Data['Label'] != 0]
 
-##If we do not want to include pixels with value 0
-##e.g. Sometimes unlabeled pixels may be given a value 0.
-dataset = dataset[dataset['Label'] != 0]
+Features = Data.drop(labels=['Label'], axis=1)
+Labels = Data['Label']
 
-X_for_RF = dataset.drop(labels=['Label'], axis=1)
-Y_for_RF = dataset['Label']
 
-# RANDOM FOREST
-from sklearn.ensemble import RandomForestClassifier
+Classifier = RandomForestClassifier(n_jobs=-1, max_samples=0.5, class_weight='balanced')
+Tic = time.time()
+Classifier.fit(Features, Labels)
+Toc = time.time()
+PrintTime(Tic,Toc)
+Results = Classifier.predict(Features)
 
-model = RandomForestClassifier(n_estimators=50, random_state=42)
+# Assess model
+CM = PlotConfusionMatrix(Labels, Results, Ticks)
 
-# Train the model on training data
-# Ravel Y to pass 1d array instead of column vector
-model.fit(X_for_RF, Y_for_RF)  # For sklearn no one hot encoding
+# Print report
+Report = metrics.classification_report(Labels.ravel(),Results.ravel())
+print(Report)
 
-filename = 'RF_model.sav'
-pickle.dump(model, open(filename, 'wb'))
+TX1 = FeatureExtractor.predict(Test)
+TX1 = TX1.reshape(-1, TX1.shape[3])
+TX2 = FeatureExtractor.predict(THSV)
+TX2 = TX2.reshape(-1, TX2.shape[3])
+TestFeatures = np.hstack([TX1,TX2])
 
-loaded_model = pickle.load(open(filename, 'rb'))
+Prediction = Classifier.predict(TestFeatures)
+PredictionImage = Prediction.reshape((Arguments.Size,Arguments.Size))
 
-# READ EXTERNAL IMAGE...
-test_img = cv2.imread('images/test_images/Sandstone_Versa0360.tif', cv2.IMREAD_COLOR)
-test_img = cv2.resize(test_img, (SIZE, SIZE))
-test_img = cv2.cvtColor(test_img, cv2.COLOR_RGB2BGR)
-test_img = np.expand_dims(test_img, axis=0)
+CM = PlotConfusionMatrix(TestLabel[TestLabel > 0], PredictionImage[TestLabel > 0], Ticks)
 
-# predict_image = np.expand_dims(X_train[8,:,:,:], axis=0)
-X_test_feature = feature_extractor.predict(test_img)
-X_test_feature = X_test_feature.reshape(-1, X_test_feature.shape[3])
-
-prediction = loaded_model.predict(X_test_feature)
-
-prediction_image = prediction.reshape(mask.shape)
-plt.imshow(prediction_image, cmap='gray')
+PlotOverlay(Test[0],PredictionImage)
