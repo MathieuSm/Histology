@@ -18,6 +18,7 @@ from sklearn.ensemble import RandomForestClassifier
 from matplotlib.colors import LinearSegmentedColormap
 from skimage import io, future, exposure, morphology, color
 from skimage.feature import multiscale_basic_features as mbf
+from sklearn.model_selection import RandomizedSearchCV, train_test_split
 
 plt.rc('font', size=12)
 
@@ -39,15 +40,21 @@ Description = """
 
 class FeatureNames:
 
-    def __init__(self, SigmaMin=4, SigmaMax=32, Channels=['R','G','B'], Features=['I', 'E', 'H1', 'H2']):
+    def __init__(self, SigmaMin=4, SigmaMax=32, Channels=['R','G','B'], Features=['I', 'E', 'H1', 'H2'], nSigma=None):
 
-        NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
+        if nSigma:
+            NumSigma = nSigma
+        else:
+            NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
         F_Names = []
         for Channel in Channels:
             for Sigma in range(NumSigma):
-                SigmaValue = SigmaMin * 2 ** Sigma
+                if nSigma:
+                    SigmaValue = np.linspace(SigmaMin, SigmaMax, nSigma)[Sigma]
+                else:
+                    SigmaValue = SigmaMin * 2 ** Sigma
                 if SigmaValue >= 1:
-                    SigmaValue = int(SigmaValue)
+                    SigmaValue = int(round(SigmaValue))
                 for Feature in Features:
                     F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Feature)
 
@@ -124,25 +131,16 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
 
     return Label, Ticks
 
-def ExtractFeatures(Array):
+def ExtractFeatures(Dict):
+    Features = {}
+    for Key in Dict.keys():
+        Lab = color.rgb2lab(Dict[Key]['ROI'])
 
-    """
-    Extract image features to train classifier and segment images
-    :param Array: 3D np array (2D + RGB)
-    :return: Features extracted
-    """
-
-    Smin, Smax = 0.5, 8
-    FNames = FeatureNames(Smin, Smax, Channels=['R', 'G', 'B', 'H', 'S', 'V'], Features=['I', 'E', 'H1', 'H2'])
-
-    Features = mbf(Array, multichannel=True, intensity=True, edges=True, texture=True,
-                sigma_min=Smin, sigma_max=Smax)
-
-    HSV = color.rgb2lab(Array)
-    F_HSV = mbf(HSV, multichannel=True, intensity=True, edges=True, texture=True,
-                sigma_min=Smin, sigma_max=Smax)
-    Features = np.dstack([Features, F_HSV])
-
+        Smin, Smax, nS = 0.5, 8, 3
+        FNames = FeatureNames(Smin, Smax, Channels=['L', 'a', 'b'], Features=['E', 'H1', 'H2'], nSigma=nS)
+        ROIFeatures = mbf(Lab, multichannel=True, intensity=False, edges=True, texture=True,
+                          sigma_min=Smin, sigma_max=Smax, num_sigma=3)
+        Features[Key] = ROIFeatures
 
     return Features, FNames
 
@@ -205,6 +203,15 @@ def PlotFeatureImportance(Classifier, F_Names=None):
         if 'V' in Channels:
             V = Sorted[Sorted['Channel'] == 'V']
             CList.append(V)
+        if 'L' in Channels:
+            L = Sorted[Sorted['Channel'] == 'L']
+            CList.append(L)
+        if 'a' in Channels:
+            a = Sorted[Sorted['Channel'] == 'a']
+            CList.append(a)
+        if 'b' in Channels:
+            b = Sorted[Sorted['Channel'] == 'b']
+            CList.append(b)
 
         Sigmas = FI['Sigma'].unique()
 
@@ -231,6 +238,9 @@ def PlotFeatureImportance(Classifier, F_Names=None):
                 Axis.bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
                 Axis.plot([],color=CMap(iC / len(CList)), label=C['Channel'].unique())
             Axis.set_xticks(np.arange(len(Features)), Features)
+            Handles, Labels = Axis.get_legend_handles_labels()
+            Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+            plt.subplots_adjust(0.1, 0.1, 0.9, 0.8)
 
         elif len(Sigmas) < 4:
             Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
@@ -239,10 +249,14 @@ def PlotFeatureImportance(Classifier, F_Names=None):
                 for iC, C in enumerate(CList):
                     F = C[C['Sigma'] == Sigma]
                     S = F.sort_values(by='Feature')
-                    Axis[i].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
+                    Axis[i].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / (len(CList)-1)), facecolor=(0, 0, 0, 0))
                     Axis[i].set_xticks(np.arange(len(Features)), Features)
                     Axis[i].set_title('Sigma = ' + Sigma)
-                    Axis[i].plot([], color=CMap(iC / len(CList)), label=C['Channel'].unique())
+                    Axis[i].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
+
+                    Handles, Labels = Axis[0].get_legend_handles_labels()
+                    Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+                    plt.subplots_adjust(0.15, 0.15, 0.9, 0.8)
 
         else:
             NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
@@ -262,9 +276,9 @@ def PlotFeatureImportance(Classifier, F_Names=None):
                     Axis[Row,Column].set_title('Sigma = ' + Sigma)
                     Axis[Row,Column].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
 
-        Handles, Labels = Axis[0,0].get_legend_handles_labels()
-        Figure.legend(Handles, Labels, loc='upper center', ncol=3)
-        plt.subplots_adjust(0.1,0.1,0.9,0.8)
+            Handles, Labels = Axis[0,0].get_legend_handles_labels()
+            Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+            plt.subplots_adjust(0.1,0.1,0.9,0.8)
         plt.show()
 
     else:
@@ -304,97 +318,72 @@ def PlotResults(ROI,Results, FileName=None):
         plt.savefig(FileName[:-4] + '_Seg.png')
     plt.show()
 
+
+
 class PCNNClass:
 
     def __init__(self):
         self.NSegments = 10
 
+    def PrintTime(Tic, Toc):
+        """
+        Print elapsed time in seconds to time in HH:MM:SS format
+        :param Tic: Actual time at the beginning of the process
+        :param Toc: Actual time at the end of the process
+        """
+
+        Delta = Toc - Tic
+
+        Hours = np.floor(Delta / 60 / 60)
+        Minutes = np.floor(Delta / 60) - 60 * Hours
+        Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
+
+        print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+
+    def GaussianKernel(self, Length=5, Sigma=1.):
+        """
+        Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+        """
+        Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+        Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+        Kernel = np.outer(Gauss, Gauss)
+        return Kernel / sum(sum(Kernel))
+
     def GetNeighbours(self, Array, N=1, Map=False):
 
-        Range = np.arange(2 * N + 1) - N
-        Rows, Cols = Array.shape
-        iRows, iCols = np.arange(Rows), np.arange(Cols)
+        """
+        Function used to get values of the neighbourhood pixels
+        :param Array: Row x Column numpy array
+        :param N: Number of neighbours offset
+        :param Map: return rows and columns indices of neigbours (bool)
+        :return: Neighbourhood pixels values, Map
+        """
+
+        L = 2*N+1
+        S = Array.shape
+        iRows, iCols = np.arange(S[0]), np.arange(S[1])
         Cols, Rows = np.meshgrid(iRows,iCols)
+        Cols = np.repeat(Cols, L).reshape((S[0], S[0], L))
+        Cols = np.repeat(Cols, L).reshape((S[0], S[0], L, L))
+        Rows = np.repeat(Rows, L).reshape((S[0], S[0], L))
+        Rows = np.repeat(Rows, L).reshape((S[0], S[0], L, L))
 
+        Range = np.arange(L) - N
+        ColRange = np.repeat(Range,L).reshape((L,L))
+        RowRange = np.tile(Range,L).reshape((L,L))
+        iCols = Cols + ColRange
+        iRows = Rows + RowRange
 
-    def GetNeighbours(Array2D, N=1, Print=False):
-        """
-        Function used to get values of the neighbourhood pixels (based on numpy.roll)
-        :param Array2D: Row x Column numpy array
-        :param N: Number of neighbours offset (1 or 2 usually)
-        :return: Neighbourhood pixels values
-        """
+        Pad = np.pad(Array,N)
+        Neighbours = Pad[iRows+N,iCols+N]
 
-        # Define a map for the neighbour index computation
-        Map = np.array([[-1, 0], [0, -1], [1, 0], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]])
+        if Map:
+            return Neighbours, [iRows, iCols]
 
-        # number of neighbours
-        Neighbours = (2 * N + 1)**2 - 1
-
-        if len(Array2D.shape) > 2:
-            YSize, XSize = Array2D.shape[:-1]
-            Dimension = Array2D.shape[-1]
-            Neighbourhood = np.zeros((YSize, XSize, Neighbours, Dimension))
-
-            # Pad the array to avoid border effects
-            Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
         else:
-            YSize, XSize = Array2D.shape
-            Neighbourhood = np.zeros((YSize, XSize, Neighbours))
+            return Neighbours
 
-            # Pad the array to avoid border effects
-            Array2D = np.pad(Array2D, 1, 'symmetric')
-
-        if Print:
-            print('\nGet neighbours ...')
-            Tic = time.time()
-
-        i = 0
-        for Shift in [-1, 1]:
-            for Axis in [0, 1]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1, 1:-1]
-                i += 1
-
-        for Shift in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
-            for Axis in [(0, 1)]:
-                Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[1:-1, 1:-1]
-                i += 1
-
-        if N == 2:
-
-            # Pad again the array to avoid border effects
-            if len(Array2D.shape) > 2:
-                Array2D = np.pad(Array2D, ((1, 1), (1, 1), (0, 0)), 'symmetric')
-            else:
-                Array2D = np.pad(Array2D, 1, 'symmetric')
-
-            for Shift in [-2, 2]:
-                for Axis in [0, 1]:
-                    Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2, 2:-2]
-                    i += 1
-
-            for Shift in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
-                for Axis in [(0, 1)]:
-                    Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2, 2:-2]
-                    i += 1
-
-            for Shift in [(-2, -1), (2, -1), (-2, 1), (2, 1)]:
-                for Axis in [(0, 1)]:
-                    Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2, 2:-2]
-                    i += 1
-
-            for Shift in [(-1, -2), (1, -2), (-1, 2), (1, 2)]:
-                for Axis in [(0, 1)]:
-                    Neighbourhood[:, :, i] = np.roll(Array2D, Shift, axis=Axis)[2:-2, 2:-2]
-                    i += 1
-
-        if Print:
-            Toc = time.time()
-            PrintTime(Tic, Toc)
-
-        return Neighbourhood, Map
-
-    def NormalizeValues(Image):
+    def NormalizeValues(self, Image):
         """
         Normalize image values, used in PCNN for easier parameters handling
         :param Image: Original grayscale image
@@ -405,7 +394,7 @@ class PCNNClass:
 
         return N_Image
 
-    def Enhance(self, Image):
+    def Enhance(self, Image, SRange = (0.01, 1.0)):
 
         """
         Enhance image using PCNN, single neuron firing and fast linking implementation
@@ -422,6 +411,7 @@ class PCNNClass:
         :return: H: Image histogram in numpy array
         """
 
+
         def FLM(Input):
             S = (Input - Input.min()) / (Input.max() - Input.min()) + 1 / 255
             W = np.array([[0.7, 1, 0.7], [1, 0, 1], [0.7, 1, 0.7]])
@@ -431,12 +421,12 @@ class PCNNClass:
             SumY = 0
             N = 0
 
-            Laplacian = np.array([[1 / 6, 2 / 3, 1 / 6, 2 / 3, -10 / 3, 2 / 3, 1 / 6, 2 / 3, 1 / 6]])
-            Theta = 1 + np.sum(GetNeighbours(S)[0] * Laplacian, axis=2)
+            Laplacian = np.array([[1 / 6, 2 / 3, 1 / 6], [2 / 3, -10 / 3, 2 / 3], [1 / 6, 2 / 3, 1 / 6]])
+            Theta = 1 + np.sum(self.GetNeighbours(S) * Laplacian, axis=(3,2))
             f = 0.75 * np.exp(-S**2 / 0.16) + 0.05
-            G = GaussianKernel(7, 1)
-            f = correlate(f, G, mode='reflect')
-            # f = gaussian(f,sigma=1,mode='reflect')
+            L = 3
+            G = self.GaussianKernel(2*L+1, 1)
+            f = np.sum(self.GetNeighbours(f,L) * G, axis=(3,2))
 
             h = 2E10
             d = 2
@@ -447,29 +437,39 @@ class PCNNClass:
             while SumY < S.size:
                 N += 1
 
-                K = correlate(Y, W, mode='reflect')
+                K = np.sum(self.GetNeighbours(Y) * W, axis=(3, 2))
                 Wave = Alpha * K + Beta * S * (K - d)
                 U = f * U + S + Wave
                 Theta = g * Theta + h * Y
                 Y = (U > Theta) * 1
                 T += N * Y
                 SumY += sum(sum(Y))
-                # print(SumY)
 
             T_inv = T.max() + 1 - T
-            Time = (NormalizeArray(T_inv) * 255).astype('uint8')
-            Stretched = GrayStretch(Time, 0.99)
+            Time = self.NormalizeValues(T_inv)
 
-            return Stretched
+            return Time
 
+        Tic = time.time()
+        print('\nEnhance image using PCNN')
         if len(Image.shape) == 2:
             Output = FLM(Image)
+
         else:
             Output = np.zeros(Image.shape)
             for i in range(Image.shape[-1]):
-                Output[:,:,i] = FLM(Image)[:,:,i]
+                Output[:,:,i] = FLM(Image[:,:,i])
 
+        Hist, Bins = np.histogram(Output, bins=1000, density=True)
+        Low = np.cumsum(Hist) / np.cumsum(Hist).max() > SRange[0]
+        High = np.cumsum(Hist) / np.cumsum(Hist).max() < SRange[1]
+        Values = Bins[1:][Low & High]
+        Output = exposure.rescale_intensity(Output, in_range=(Values[0], Values[-1]))
 
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Output
 
     def Segment(self,Image, Beta=2, Delta=1 / 255, VT=100):
 
@@ -491,12 +491,17 @@ class PCNNClass:
         Tic = time.time()
         print('\nImage segmentation...')
 
+        if Image.shape[-1] == 3:
+            Input = color.rgb2gray(Image)
+        else:
+            Input = Image
+
         # Initialize parameters
-        S = NormalizeValues(Image)
+        S = self.NormalizeValues(Input)
         Rows, Columns = S.shape
         Y = np.zeros((Rows, Columns))
         T = np.zeros((Rows, Columns))
-        W = np.ones((Rows, Columns, 8)) * np.array([1, 1, 1, 1, 0.5, 0.5, 0.5, 0.5])
+        W = np.array([[0.5, 1, 0.5], [1, 0, 1], [0.5, 1, 0.5]])
         Theta = np.ones((Rows, Columns))
 
         FiredNumber = 0
@@ -506,7 +511,7 @@ class PCNNClass:
         while FiredNumber < S.size:
             N += 1
             F = S
-            L = np.sum(GetNeighbours(Y)[0] * W, axis=2)
+            L = np.sum(self.GetNeighbours(Y) * W, axis=(3,2))
             Theta = Theta - Delta + VT * Y
             U = F * (1 + Beta * L)
             Y = (U > Theta) * 1
@@ -514,14 +519,25 @@ class PCNNClass:
             T = T + N * Y
             FiredNumber = FiredNumber + sum(sum(Y))
 
-        Output = 1 - NormalizeValues(T)
+        Output = 1 - self.NormalizeValues(T)
+
+        if Image.shape[-1] == 3:
+            Segments = np.zeros(Image.shape)
+            for Value in np.unique(Output):
+                Binary = Output == Value
+                Color = np.mean(Image[Binary], axis=0)
+                Segments[Binary] = Color
+            Output = Segments
+
+        if Image.dtype == 'uint8':
+            Output = np.round(Output).astype('uint8')
 
         # Print time elapsed
         Toc = time.time()
         PrintTime(Tic, Toc)
 
         return Output
-
+PCNN = PCNNClass()
 
 # For testing purpose
 class ArgumentsClass:
@@ -547,107 +563,94 @@ def Main(Arguments):
     Pictures.sort()
 
     # Store training and test pictures
-    Train = {}
-    Test = {}
+    Data = {}
     for iPicture, Picture in enumerate(Pictures):
-
-        if iPicture < len(Pictures) - 1:
-            Train[Picture[:-8]] = {}
-            Train[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-            Seg = io.imread(str(Path(DataDirectory, Picture)))
-            Train[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=bool(1-iPicture))[0]
-
-        else:
-            Test[Picture[:-8]] = {}
-            Test[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-            Seg = io.imread(str(Path(DataDirectory, Picture)))[:,:,:-1]
-            Test[Picture[:-8]]['Labels'], Ticks = ExtractLabels(Seg,DilateCM=False)
-
-
-    def ExtractFeatures(Dict):
-
-        Features = {}
-        for Key in Dict.keys():
-            Shape = Dict[Key]['ROI'].shape
-            ROIFeatures = np.zeros((Shape[0],Shape[1],9))
-            ROIFeatures[:, :, :3] = Dict[Key]['ROI']
-            ROIFeatures[:, :, 3:6] = color.rgb2hsv(Dict[Key]['ROI'])
-            ROIFeatures[:, :, 6:] = color.rgb2lab(Dict[Key]['ROI'])
-            Features[Key] = ROIFeatures
-
-        return Features
-
-    TrainFeatures = ExtractFeatures(Train)
-    TestFeatures = ExtractFeatures(Test)
-
-    # Build data frames
-    TrainData = []
-    TrainLabel = []
-    for Key in TrainFeatures.keys():
-        Features = TrainFeatures[Key]
-        TrainData.append(Features.reshape(-1,Features.shape[-1]))
-        Labels = Train[Key]['Labels']
-        TrainLabel.append(Labels.ravel())
-    TrainData = np.vstack(TrainData)
-    TrainLabel = np.hstack(TrainLabel)
-
-    # Filter out non labelled data
-    TrainData = TrainData[TrainLabel > 0]
-    TrainLabel = TrainLabel[TrainLabel > 0]
-
-    TestData = []
-    TestLabel = []
-    for Key in TestFeatures.keys():
-        Features = TestFeatures[Key]
-        TestData.append(Features.reshape(-1, Features.shape[-1]))
-        Labels = Test[Key]['Labels']
-        TestLabel.append(Labels.ravel())
-    TestData = np.vstack(TestData)
-    TestLabel = np.hstack(TestLabel)
-
+        Data[Picture[:-8]] = {}
+        Data[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
+        Seg = io.imread(str(Path(DataDirectory, Picture)))
+        Data[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=iPicture<1)[0]
 
 
     # Extract picture features
     print('\nExtract manual segmentation features')
     Tic = time.time()
-    for iPicture, Picture in enumerate(Pictures[:-1]):
-        ROI = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-        Seg_ROI = io.imread(str(Path(DataDirectory, Picture)))
-
-        if iPicture == 0:
-            Label, Ticks = ExtractLabels(Seg_ROI, DilateCM=True)
-            Features, FNames = ExtractFeatures(ROI)
-
-            Features = Features[Label > 0]
-            Label = Label[Label > 0]
-
-        else:
-            NewLabel = ExtractLabels(Seg_ROI)[0]
-            NewFeatures = ExtractFeatures(ROI)[0]
-
-            Features = np.vstack([Features, NewFeatures[NewLabel > 0]])
-            Label = np.concatenate([Label, NewLabel[NewLabel > 0]])
-
+    Features, FNames = ExtractFeatures(Data)
     Toc = time.time()
     PrintTime(Tic, Toc)
+
+    # Build data arrays
+    FeaturesData = []
+    LabelData = []
+    for Key in Features.keys():
+        ROIFeatures = Features[Key]
+        FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
+        Labels = Data[Key]['Labels']
+        LabelData.append(Labels.ravel())
+    FeaturesData = np.vstack(FeaturesData)
+    LabelData = np.hstack(LabelData)
+
+    # Filter out non labelled data
+    FeaturesData = FeaturesData[LabelData > 0]
+    LabelData = LabelData[LabelData > 0]
+
+    # Store into data frame and split training and test data
+    Data = pd.DataFrame(FeaturesData)
+    Data['Labels'] = LabelData
+    Train, Test = train_test_split(Data)
+    TrainFeatures = Train.drop('Labels', axis=1)
+    TestFeatures = Test.drop('Labels', axis=1)
+    TrainLabels = Train['Labels']
+    TestLabels = Test['Labels']
+
+    # Create classifier, assess accuracy and look at default parameters
+    Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
+    Classifier.fit(TrainFeatures,TrainLabels)
+    OriginalPredictions = Classifier.predict(TestFeatures)
+    print('\nModel accuracy:')
+    print(round(metrics.accuracy_score(TestLabels, OriginalPredictions),3))
+    Classifier.get_params()
+
+    # Create parameter grid for randomized search
+    nEstimators = [int(n) for n in np.linspace(start=20, stop=200, num=4)]
+    MaxSamples = [n.round(1) for n in np.linspace(start=0.2, stop=0.8, num=4)]
+    RandomGrid = {'n_estimators': nEstimators,
+                  'max_samples': MaxSamples}
+
+    # Random search of parameters, using 3 folds cross validation,
+    # search across 100 different combinations, and use all available cores
+    RandomSCV = RandomizedSearchCV(estimator=Classifier,
+                                   param_distributions=RandomGrid,
+                                   n_iter=10, cv=5, n_jobs=-1, verbose=2)
+    # Fit the random search model to find best parameters
+    RandomSCV.fit(TrainFeatures, TrainLabels)
+    Best = RandomSCV.best_estimator_
+    RandomSCV.best_params_
+
+    # Check accuracy improvement
+    Classifier.fit(TrainData,TrainLabel)
+    Original = Classifier.predict(TestData)
+    Optimized = Best.predict(TestData)
+
+
+    Report = metrics.classification_report(TestLabel[TestLabel > 0], Optimized[TestLabel > 0])
+    print(Report)
 
     # Create and train classifier
     print('\nCreate and train random forest classifier')
     Tic = time.time()
-    Classifier = RandomForestClassifier(n_jobs=-1, n_estimators=100, max_samples=1/3, class_weight='balanced')
-    Classifier = future.fit_segmenter(Label, Features, Classifier)
+    Classifier = future.fit_segmenter(TrainLabel, TrainData, Classifier)
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     # Perform predictions
     print('\nPerform preditions and assess model')
     Tic = time.time()
-    Results = future.predict_segmenter(Features, Classifier)
+    Results = future.predict_segmenter(TrainData, Classifier)
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     # Assess model
-    CM = PlotConfusionMatrix(Label, Results, Ticks)
+    CM = PlotConfusionMatrix(TrainLabel, Results, Ticks)
 
     # Print report
     Report = metrics.classification_report(Label.ravel(),Results.ravel())
@@ -659,29 +662,22 @@ def Main(Arguments):
     FI['Cum Sum'] = FI['Importance'].cumsum()
     Figure, Axis = plt.subplots(1,1)
     Axis.plot(FI['Cum Sum'].values, color=(1,0,0), marker='o', linestyle='--', fillstyle='none')
-    Axis.set_ylim([0,1])
+    Axis.set_ylim([0,1.05])
     Axis.set_ylabel('Relative importance (-)')
     Axis.set_xlabel('Feature number (-)')
     plt.show()
-    FI[FI['Cum Sum'] < 0.8]['Feature'].value_counts()
+    FI[FI['Cum Sum'] < 0.8]['Importance'].value_counts()
 
     # Assess model with test image
-    Picture = Pictures[-1]
-    ROI = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-    Seg_ROI = io.imread(str(Path(DataDirectory, Picture)))
-
-    TestLabel = ExtractLabels(Seg_ROI)[0]
-    TestFeatures = ExtractFeatures(ROI)[0]
-
     print('\nPerform preditions of test image')
     Tic = time.time()
-    Results = future.predict_segmenter(TestFeatures, Classifier)
+    Results = future.predict_segmenter(TestData, Classifier)
     Toc = time.time()
     PrintTime(Tic, Toc)
 
     # Assess model
     CM = PlotConfusionMatrix(TestLabel[TestLabel > 0], Results[TestLabel > 0], Ticks)
-    PlotResults(ROI, Results)
+    PlotResults(Test['ROI_3']['ROI'], np.reshape(Results,Test['ROI_3']['Labels'].shape))
 
 
     if Arguments.Save:
