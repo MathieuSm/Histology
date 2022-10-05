@@ -18,7 +18,7 @@ from sklearn.ensemble import RandomForestClassifier
 from matplotlib.colors import LinearSegmentedColormap
 from skimage import io, future, exposure, morphology, color
 from skimage.feature import multiscale_basic_features as mbf
-from sklearn.model_selection import RandomizedSearchCV, train_test_split
+from sklearn.model_selection import RandomizedSearchCV, train_test_split, GridSearchCV
 
 plt.rc('font', size=12)
 
@@ -40,7 +40,7 @@ Description = """
 
 class FeatureNames:
 
-    def __init__(self, SigmaMin=4, SigmaMax=32, Channels=['R','G','B'], Features=['I', 'E', 'H1', 'H2'], nSigma=None):
+    def __init__(self, SigmaMin=4, SigmaMax=32, Channels=['RGB'], Features=['I', 'E', 'H1', 'H2'], nSigma=None):
 
         if nSigma:
             NumSigma = nSigma
@@ -48,15 +48,16 @@ class FeatureNames:
             NumSigma = int(np.log2(SigmaMax / SigmaMin) + 1)
         F_Names = []
         for Channel in Channels:
-            for Sigma in range(NumSigma):
-                if nSigma:
-                    SigmaValue = np.linspace(SigmaMin, SigmaMax, nSigma)[Sigma]
-                else:
-                    SigmaValue = SigmaMin * 2 ** Sigma
-                if SigmaValue >= 1:
-                    SigmaValue = int(round(SigmaValue))
-                for Feature in Features:
-                    F_Names.append(Channel + ' Sigma ' + str(SigmaValue) + ' ' + Feature)
+            for C in Channel:
+                for Sigma in range(NumSigma):
+                    if nSigma:
+                        SigmaValue = np.linspace(SigmaMin, SigmaMax, nSigma)[Sigma]
+                    else:
+                        SigmaValue = SigmaMin * 2 ** Sigma
+                    if SigmaValue >= 1:
+                        SigmaValue = int(round(SigmaValue))
+                    for Feature in Features:
+                        F_Names.append(C + ' Sigma ' + str(SigmaValue) + ' ' + Feature)
 
         self.Names = F_Names
 
@@ -131,18 +132,48 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
 
     return Label, Ticks
 
-def ExtractFeatures(Dict):
-    Features = {}
+def ExtractFeatures(Dict, Channels=['Lab'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
+
+    FeaturesDict = {}
     for Key in Dict.keys():
-        Lab = color.rgb2lab(Dict[Key]['ROI'])
 
-        Smin, Smax, nS = 0.5, 8, 3
-        FNames = FeatureNames(Smin, Smax, Channels=['L', 'a', 'b'], Features=['E', 'H1', 'H2'], nSigma=nS)
-        ROIFeatures = mbf(Lab, multichannel=True, intensity=False, edges=True, texture=True,
-                          sigma_min=Smin, sigma_max=Smax, num_sigma=3)
-        Features[Key] = ROIFeatures
+        # Generate features names (for later plotting)
+        FNames = FeatureNames(SRange[0], SRange[1], Channels=Channels, Features=Features, nSigma=nSigma)
 
-    return Features, FNames
+        # Set variables to analyse
+        I = 'I' in Features
+        E = 'E' in Features
+        T = 'H1' in Features
+
+        # Determine array shape
+        ROI = Dict[Key]['ROI']
+        if nSigma:
+            NumSigma = nSigma
+        else:
+            NumSigma = int(np.log2(SRange[1] / SRange[0]) + 1)
+
+        nFeatures = 3 * (I + E + 2*T) * NumSigma
+        ROIFeatures = np.zeros((ROI.shape[0], ROI.shape[1],nFeatures * len(Channels)))
+
+        # Extract features
+        i = 0
+        j = nFeatures
+        for Channel in Channels:
+            if Channel == 'RGB':
+                P = ROI
+            elif Channel == 'HSV':
+                P = color.rgb2hsv(ROI)
+            elif Channel == 'Lab':
+                P = color.rgb2lab(ROI)
+
+            ROIFeatures[:,:,i:j] = mbf(P, multichannel=True, intensity=I, edges=E, texture=T,
+                                       sigma_min=SRange[0], sigma_max=SRange[1], num_sigma=NumSigma)
+            i += nFeatures
+            j += nFeatures
+
+        FeaturesDict[Key] = ROIFeatures
+
+    return FeaturesDict, FNames
 
 def PlotConfusionMatrix(GroundTruth, Results, Ticks=None):
 
@@ -563,18 +594,19 @@ def Main(Arguments):
     Pictures.sort()
 
     # Store training and test pictures
-    Data = {}
+    PicturesData = {}
     for iPicture, Picture in enumerate(Pictures):
-        Data[Picture[:-8]] = {}
-        Data[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
+        PicturesData[Picture[:-8]] = {}
+        PicturesData[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
         Seg = io.imread(str(Path(DataDirectory, Picture)))
-        Data[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=iPicture<1)[0]
+        PicturesData[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=iPicture < 1)[0]
 
 
-    # Extract picture features
+    ## 01 Investigate features selection
     print('\nExtract manual segmentation features')
     Tic = time.time()
-    Features, FNames = ExtractFeatures(Data)
+    # Features, FNames = ExtractFeatures(Data, ['Lab'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
+    Features, FNames = ExtractFeatures(PicturesData, ['Lab'], ['I', 'E', 'H1', 'H2'], [0.5, 16])
     Toc = time.time()
     PrintTime(Tic, Toc)
 
@@ -584,7 +616,7 @@ def Main(Arguments):
     for Key in Features.keys():
         ROIFeatures = Features[Key]
         FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
-        Labels = Data[Key]['Labels']
+        Labels = PicturesData[Key]['Labels']
         LabelData.append(Labels.ravel())
     FeaturesData = np.vstack(FeaturesData)
     LabelData = np.hstack(LabelData)
@@ -593,44 +625,132 @@ def Main(Arguments):
     FeaturesData = FeaturesData[LabelData > 0]
     LabelData = LabelData[LabelData > 0]
 
-    # Store into data frame and split training and test data
+    # Store into data frame
     Data = pd.DataFrame(FeaturesData)
     Data['Labels'] = LabelData
+
+    # Split training and test data
     Train, Test = train_test_split(Data)
     TrainFeatures = Train.drop('Labels', axis=1)
     TestFeatures = Test.drop('Labels', axis=1)
     TrainLabels = Train['Labels']
     TestLabels = Test['Labels']
 
-    # Create classifier, assess accuracy and look at default parameters
+    # Fit classifier and record metrics
+    FeaturesScore = pd.DataFrame({'Accuracy':[0.954694, 0.961010, 0.958341],
+                                  'Time':[167.018937, 162.538473, 188.128806],
+                                  'Type':['RGB', 'HSV', 'Lab']},index=[0,1,2])
     Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
-    Classifier.fit(TrainFeatures,TrainLabels)
+
+    i = 2
+    Tic = time.time()
+    Classifier.fit(TrainFeatures, TrainLabels)
+    Toc = time.time()
+    Predictions = Classifier.predict(TestFeatures)
+    FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
+    FeaturesScore.loc[i, 'Time'] = Toc - Tic
+    FeaturesScore.loc[i, 'Type'] = 'Lab'
+
+    FI = PlotFeatureImportance(Classifier, FNames.Names)
+    FI = FI.sort_values(by='Importance', ascending=False)
+    FI['Cum Sum'] = FI['Importance'].cumsum()
+    Figure, Axis = plt.subplots(1, 1)
+    Axis.plot(FI['Cum Sum'].values, color=(1, 0, 0), marker='o', linestyle='--', fillstyle='none')
+    Axis.set_ylim([0, 1.05])
+    Axis.set_ylabel('Relative importance (-)')
+    Axis.set_xlabel('Feature number (-)')
+    plt.show()
+
+    # Under sample to investigate data quantity impact
+    MinClass = Data['Labels'].value_counts().min()
+    Samplings = np.logspace(np.log2(100), np.log2(MinClass), num=5, base=2)
+
+    UnderScore = pd.DataFrame(columns=['Accuracy', 'Time'])
+    for i, Sampling in enumerate(Samplings):
+
+        # Sample data and set classifier with standard parameters
+        UnderData = Data.groupby('Labels').sample(int(Sampling.round()))
+        Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
+
+        # Split training and test data
+        Train, Test = train_test_split(UnderData)
+        TrainFeatures = Train.drop('Labels', axis=1)
+        TestFeatures = Test.drop('Labels', axis=1)
+        TrainLabels = Train['Labels']
+        TestLabels = Test['Labels']
+
+        # Fit classifier and record metrics
+        Tic = time.time()
+        Classifier.fit(TrainFeatures, TrainLabels)
+        Toc = time.time()
+        Predictions = Classifier.predict(TestFeatures)
+        UnderScore.loc[i,'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
+        UnderScore.loc[i,'Time'] = Toc - Tic
+
+
+    Figure, Axis = plt.subplots(1,1)
+    Axis.plot(Samplings, color=(1,0,0), marker='o', linestyle='--')
+    Axis.set_yscale('log')
+    plt.show()
+
+
+
+    # Create classifier, assess accuracy and look at default parameters (use subset to speed up the process)
+    Subset = np.random.randint(0,len(TrainLabels),int(len(TrainLabels)/10))
+    Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
+    Classifier.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
     OriginalPredictions = Classifier.predict(TestFeatures)
     print('\nModel accuracy:')
     print(round(metrics.accuracy_score(TestLabels, OriginalPredictions),3))
     Classifier.get_params()
 
     # Create parameter grid for randomized search
-    nEstimators = [int(n) for n in np.linspace(start=20, stop=200, num=4)]
+    nEstimators = [int(n) for n in np.linspace(start=20, stop=200, num=7)]
     MaxSamples = [n.round(1) for n in np.linspace(start=0.2, stop=0.8, num=4)]
+    MaxSamples.append(None)
     RandomGrid = {'n_estimators': nEstimators,
                   'max_samples': MaxSamples}
 
     # Random search of parameters, using 3 folds cross validation,
-    # search across 100 different combinations, and use all available cores
+    # search across 30 different combinations, and use all available cores
     RandomSCV = RandomizedSearchCV(estimator=Classifier,
                                    param_distributions=RandomGrid,
-                                   n_iter=10, cv=5, n_jobs=-1, verbose=2)
+                                   n_iter=30, cv=3, n_jobs=-1, verbose=2)
     # Fit the random search model to find best parameters
-    RandomSCV.fit(TrainFeatures, TrainLabels)
+    RandomSCV.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
     Best = RandomSCV.best_estimator_
     RandomSCV.best_params_
 
     # Check accuracy improvement
-    Classifier.fit(TrainData,TrainLabel)
-    Original = Classifier.predict(TestData)
-    Optimized = Best.predict(TestData)
+    OptimizedPredictions = Best.predict(TestFeatures)
+    print('\nModel accuracy:')
+    print(round(metrics.accuracy_score(TestLabels, OptimizedPredictions), 3))
 
+    # Use previous results to perform grid search
+    nEstimators = [150, 200, 250, 300]
+    MaxSamples = [0.8, None]
+    ParamGrid = {'n_estimators': nEstimators,
+                  'max_samples': MaxSamples}
+    GridSCV = GridSearchCV(estimator=Classifier, param_grid=ParamGrid, cv=3, n_jobs=-1, verbose=2)
+    # Fit the random search model to find best parameters
+    GridSCV.fit(TrainFeatures.iloc[Subset], TrainLabels.iloc[Subset])
+    Best = GridSCV.best_estimator_
+    GridSCV.best_params_
+
+    # Check accuracy improvement
+    BestPredictions = Best.predict(TestFeatures)
+    print('\nModel accuracy:')
+    print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
+
+    # Check accuracy of both models with full data
+    Classifier.fit(TrainFeatures,TrainLabels)
+    OriginalPredictions = Classifier.predict(TestFeatures)
+    print('\nOriginal model accuracy:')
+    print(round(metrics.accuracy_score(TestLabels, OriginalPredictions), 3))
+    Best.fit(TrainFeatures,TrainLabels)
+    BestPredictions = Best.predict(TestFeatures)
+    print('\nBest model accuracy:')
+    print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
 
     Report = metrics.classification_report(TestLabel[TestLabel > 0], Optimized[TestLabel > 0])
     print(Report)
