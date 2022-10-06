@@ -203,7 +203,7 @@ def PlotConfusionMatrix(GroundTruth, Results, Ticks=None):
 
     return CM
 
-def PlotFeatureImportance(Classifier, F_Names=None):
+def PlotFeatureImportance(Classifier, F_Names=None, Sortby='Feature'):
 
     FI = pd.DataFrame(Classifier.feature_importances_, columns=['Importance'])
 
@@ -258,67 +258,90 @@ def PlotFeatureImportance(Classifier, F_Names=None):
                           (1.0, 1.0, 1.0))}
     CMap = LinearSegmentedColormap('MyMap', CMapDict)
 
-    if F_Names:
+    if Sortby == 'Feature':
 
-        if len(Sigmas) == 1:
+        if F_Names:
 
-            Figure, Axis = plt.subplots(1,1)
+            if len(Sigmas) == 1:
 
-            for iC, C in enumerate(CList):
-                S = C.sort_values(by='Feature')
-                Axis.bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
-                Axis.plot([],color=CMap(iC / len(CList)), label=C['Channel'].unique())
-            Axis.set_xticks(np.arange(len(Features)), Features)
-            Handles, Labels = Axis.get_legend_handles_labels()
-            Figure.legend(Handles, Labels, loc='upper center', ncol=3)
-            plt.subplots_adjust(0.1, 0.1, 0.9, 0.8)
+                Figure, Axis = plt.subplots(1,1)
 
-        elif len(Sigmas) < 4:
-            Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
-
-            for i, Sigma in enumerate(Sigmas):
                 for iC, C in enumerate(CList):
-                    F = C[C['Sigma'] == Sigma]
-                    S = F.sort_values(by='Feature')
-                    Axis[i].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / (len(CList)-1)), facecolor=(0, 0, 0, 0))
-                    Axis[i].set_xticks(np.arange(len(Features)), Features)
-                    Axis[i].set_title('Sigma = ' + Sigma)
-                    Axis[i].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
+                    S = C.sort_values(by='Feature')
+                    Axis.bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / (len(CList)-1)), facecolor=(0, 0, 0, 0))
+                    Axis.plot([],color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique())
+                Axis.set_xticks(np.arange(len(Features)), Features)
+                Handles, Labels = Axis.get_legend_handles_labels()
+                Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+                plt.subplots_adjust(0.1, 0.1, 0.9, 0.8)
 
-                    Handles, Labels = Axis[0].get_legend_handles_labels()
-                    Figure.legend(Handles, Labels, loc='upper center', ncol=3)
-                    plt.subplots_adjust(0.15, 0.15, 0.9, 0.8)
+            elif len(Sigmas) < 4:
+                Figure, Axis = plt.subplots(1, len(Sigmas), sharex=True, sharey=True)
+
+                for i, Sigma in enumerate(Sigmas):
+                    for iC, C in enumerate(CList):
+                        F = C[C['Sigma'] == Sigma]
+                        S = F.sort_values(by='Feature')
+                        Axis[i].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / (len(CList)-1)), facecolor=(0, 0, 0, 0))
+                        Axis[i].set_xticks(np.arange(len(Features)), Features)
+                        Axis[i].set_title('Sigma = ' + Sigma)
+                        Axis[i].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
+
+                        Handles, Labels = Axis[0].get_legend_handles_labels()
+                        Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+                        plt.subplots_adjust(0.15, 0.15, 0.9, 0.8)
+
+            else:
+                NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
+                NColumns = np.ceil(len(Sigmas)/NRows).astype('int')
+                Figure, Axis = plt.subplots(NRows, NColumns, sharex=True, sharey=True)
+                Columns = np.tile(np.arange(NColumns),NRows)
+                Rows = np.repeat(np.arange(NRows),NColumns)
+                for i, Sigma in enumerate(Sigmas):
+                    Row = Rows[i]
+                    Column = Columns[i]
+                    Ls = []
+                    for iC, C in enumerate(CList):
+                        F = C[C['Sigma'] == Sigma]
+                        S = F.sort_values(by='Feature')
+                        Axis[Row,Column].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / (len(CList)-1)), facecolor=(0, 0, 0, 0))
+                        Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
+                        Axis[Row,Column].set_title('Sigma = ' + Sigma)
+                        Axis[Row,Column].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
+
+                Handles, Labels = Axis[0,0].get_legend_handles_labels()
+                Figure.legend(Handles, Labels, loc='upper center', ncol=3)
+                plt.subplots_adjust(0.1,0.1,0.9,0.8)
+            plt.show()
 
         else:
-            NRows = np.floor(np.sqrt(len(Sigmas))).astype('int')
-            NColumns = np.ceil(len(Sigmas)/NRows).astype('int')
-            Figure, Axis = plt.subplots(NRows, NColumns, sharex=True, sharey=True)
-            Columns = np.tile(np.arange(NColumns),NRows)
-            Rows = np.repeat(np.arange(NRows),NColumns)
-            for i, Sigma in enumerate(Sigmas):
-                Row = Rows[i]
-                Column = Columns[i]
-                Ls = []
+
+            Figure, Axis = plt.subplots(1,1)
+            Axis.bar(np.arange(len(FI))+1, FI['Importance'], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
+            Axis.set_xlabel('Feature number (-)')
+            Axis.set_ylabel('Relative importance (-)')
+            plt.show()
+
+    elif Sortby == 'Channel':
+
+        if F_Names:
+            for iF, F in enumerate(FI['Feature'].unique()):
+                print(F)
+                Figure, Axis = plt.subplots(1, 1)
                 for iC, C in enumerate(CList):
-                    F = C[C['Sigma'] == Sigma]
-                    S = F.sort_values(by='Feature')
-                    Axis[Row,Column].bar(np.arange(len(S)), S['Importance'], edgecolor=CMap(iC / len(CList)), facecolor=(0, 0, 0, 0))
-                    Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
-                    Axis[Row,Column].set_title('Sigma = ' + Sigma)
-                    Axis[Row,Column].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
-
-            Handles, Labels = Axis[0,0].get_legend_handles_labels()
-            Figure.legend(Handles, Labels, loc='upper center', ncol=3)
-            plt.subplots_adjust(0.1,0.1,0.9,0.8)
-        plt.show()
-
-    else:
-
-        Figure, Axis = plt.subplots(1,1)
-        Axis.bar(np.arange(len(FI))+1, FI['Importance'], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
-        Axis.set_xlabel('Feature number (-)')
-        Axis.set_ylabel('Relative importance (-)')
-        plt.show()
+                    if iC < 3:
+                        Ec = (1,0,0)
+                    elif iC >= 6:
+                        Ec = (0,0,1)
+                    else:
+                        Ec = (0,1,0)
+                    Axis.bar(iC, C[C['Feature'] == F]['Importance'], edgecolor=Ec, facecolor=(0, 0, 0, 0))
+                Axis.set_xticks(np.arange(len(CList)), FI['Channel'].unique())
+                Axis.set_xlabel('Channel (-)')
+                Axis.set_ylabel('Feature importance (-)')
+                Axis.set_ylim([0,1.05 * FI['Importance'].max()])
+                plt.subplots_adjust(0.15, 0.15, 0.9, 0.8)
+                plt.show()
 
     return FI
 
@@ -606,7 +629,7 @@ def Main(Arguments):
     print('\nExtract manual segmentation features')
     Tic = time.time()
     # Features, FNames = ExtractFeatures(Data, ['Lab'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
-    Features, FNames = ExtractFeatures(PicturesData, ['Lab'], ['I', 'E', 'H1', 'H2'], [0.5, 16])
+    Features, FNames = ExtractFeatures(PicturesData, ['RGB','HSV','Lab'], ['I', 'E', 'H1', 'H2'], [8, 8], 1)
     Toc = time.time()
     PrintTime(Tic, Toc)
 
@@ -650,6 +673,15 @@ def Main(Arguments):
     FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
     FeaturesScore.loc[i, 'Time'] = Toc - Tic
     FeaturesScore.loc[i, 'Type'] = 'Lab'
+
+    for V in ['Accuracy','Time']:
+        Figure, Axis = plt.subplots(1,1, sharex=True)
+        Axis.bar(np.arange(3), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
+        Axis.set_xticks(np.arange(3),FeaturesScore['Type'])
+        Axis.set_xlabel('Color space (-)')
+        Axis.set_ylabel(V)
+        plt.subplots_adjust(0.15,0.15,0.85,0.9)
+        plt.show()
 
     FI = PlotFeatureImportance(Classifier, FNames.Names)
     FI = FI.sort_values(by='Importance', ascending=False)
