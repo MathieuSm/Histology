@@ -132,7 +132,7 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
 
     return Label, Ticks
 
-def ExtractFeatures(Dict, Channels=['Lab'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
+def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
 
     FeaturesDict = {}
     for Key in Dict.keys():
@@ -300,7 +300,6 @@ def PlotFeatureImportance(Classifier, F_Names=None, Sortby='Feature'):
                 for i, Sigma in enumerate(Sigmas):
                     Row = Rows[i]
                     Column = Columns[i]
-                    Ls = []
                     for iC, C in enumerate(CList):
                         F = C[C['Sigma'] == Sigma]
                         S = F.sort_values(by='Feature')
@@ -308,6 +307,7 @@ def PlotFeatureImportance(Classifier, F_Names=None, Sortby='Feature'):
                         Axis[Row,Column].set_xticks(np.arange(len(Features)), Features)
                         Axis[Row,Column].set_title('Sigma = ' + Sigma)
                         Axis[Row,Column].plot([], color=CMap(iC / (len(CList)-1)), label=C['Channel'].unique()[0])
+                        # Axis[Row, Column].set_ylim([0,0.08])
 
                 Handles, Labels = Axis[0,0].get_legend_handles_labels()
                 Figure.legend(Handles, Labels, loc='upper center', ncol=3)
@@ -628,8 +628,8 @@ def Main(Arguments):
     ## 01 Investigate features selection
     print('\nExtract manual segmentation features')
     Tic = time.time()
-    # Features, FNames = ExtractFeatures(Data, ['Lab'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
-    Features, FNames = ExtractFeatures(PicturesData, ['RGB','HSV','Lab'], ['I', 'E', 'H1', 'H2'], [8, 8], 1)
+    Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
+    # Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['H1', 'H2'], [0.5, 16])
     Toc = time.time()
     PrintTime(Tic, Toc)
 
@@ -660,22 +660,47 @@ def Main(Arguments):
     TestLabels = Test['Labels']
 
     # Fit classifier and record metrics
-    FeaturesScore = pd.DataFrame({'Accuracy':[0.954694, 0.961010, 0.958341],
-                                  'Time':[167.018937, 162.538473, 188.128806],
+    FeaturesScore = pd.DataFrame({'Accuracy':[0.954343, 0.961010, 0.958341],
+                                  'Time':[160.316673, 162.538473, 185],
                                   'Type':['RGB', 'HSV', 'Lab']},index=[0,1,2])
     Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
 
-    i = 2
+    i = 11
     Tic = time.time()
     Classifier.fit(TrainFeatures, TrainLabels)
     Toc = time.time()
     Predictions = Classifier.predict(TestFeatures)
     FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
     FeaturesScore.loc[i, 'Time'] = Toc - Tic
-    FeaturesScore.loc[i, 'Type'] = 'Lab'
+    FeaturesScore.loc[i, 'Type'] = 'HSV'
+    FeaturesScore.loc[i, 'nFeatures'] = 36.0
+
+    Figure, Axis = plt.subplots(1,1)
+    i = 0
+    Colors = [(1,0,0),(0,1,0),(0,0,1)]
+    for L, D in FeaturesScore.groupby('Type'):
+        S = D.sort_values(by='nFeatures')
+        Axis.plot(S['nFeatures'],S['Time'],color=Colors[i], marker='o', linestyle='--', label=L)
+        i += 1
+    Axis.set_xlabel('Features number (-)')
+    Axis.set_ylabel('Fitting time (s)')
+    plt.legend()
+    plt.show()
+
+    Figure, Axis = plt.subplots(1,1)
+    i = 0
+    Colors = [(1,0,0),(0,1,0),(0,0,1)]
+    for L, D in FeaturesScore.groupby('Type'):
+        S = D.sort_values(by='nFeatures')
+        Axis.plot(S['nFeatures'],S['Accuracy'], marker='o', color=Colors[i], linestyle='--', label=L)
+        i += 1
+    Axis.set_xlabel('Features number (-)')
+    Axis.set_ylabel('Prediction accuracy (-)')
+    plt.legend()
+    plt.show()
 
     for V in ['Accuracy','Time']:
-        Figure, Axis = plt.subplots(1,1, sharex=True)
+        Figure, Axis = plt.subplots(1,1)
         Axis.bar(np.arange(3), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
         Axis.set_xticks(np.arange(3),FeaturesScore['Type'])
         Axis.set_xlabel('Color space (-)')
@@ -693,7 +718,7 @@ def Main(Arguments):
     Axis.set_xlabel('Feature number (-)')
     plt.show()
 
-    # Under sample to investigate data quantity impact
+    # 02 Under sample to investigate data quantity impact
     MinClass = Data['Labels'].value_counts().min()
     Samplings = np.logspace(np.log2(100), np.log2(MinClass), num=5, base=2)
 
@@ -716,13 +741,25 @@ def Main(Arguments):
         Classifier.fit(TrainFeatures, TrainLabels)
         Toc = time.time()
         Predictions = Classifier.predict(TestFeatures)
-        UnderScore.loc[i,'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
-        UnderScore.loc[i,'Time'] = Toc - Tic
-
+        UnderScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
+        UnderScore.loc[i, 'Time'] = Toc - Tic
+        UnderScore.loc[i, 'N'] = round(Sampling)
 
     Figure, Axis = plt.subplots(1,1)
-    Axis.plot(Samplings, color=(1,0,0), marker='o', linestyle='--')
+    Axis.plot(Samplings, UnderScore['Time'], color=(1,0,0), marker='o', linestyle='--')
+    Axis.set_xlabel('Sampling (-)')
+    Axis.set_ylabel('Time (s)')
+    Axis.set_xscale('log')
     Axis.set_yscale('log')
+    plt.subplots_adjust(0.15,0.15,0.85,0.9)
+    plt.show()
+
+    Figure, Axis = plt.subplots(1, 1)
+    Axis.plot(Samplings, UnderScore['Accuracy'], color=(1, 0, 0), marker='o', linestyle='--')
+    Axis.set_xlabel('Sampling (-)')
+    Axis.set_ylabel('Accuracy (-)')
+    Axis.set_xscale('log')
+    plt.subplots_adjust(0.15, 0.15, 0.85, 0.9)
     plt.show()
 
 

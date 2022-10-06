@@ -279,14 +279,14 @@ class ArgumentsClass:
         self.Path = str(Path.cwd() / 'Scripts' / 'Variability' / 'ROIs')
         self.N = 5
         self.Pixel_S = 1.0460251046025104
-        self.ROI_S = 500
+        self.ROI_S = 1000
 Arguments = ArgumentsClass()
 
 def Main(Arguments):
 
     # List pictures
     DataDirectory = Arguments.Data
-    Pictures = [P for P in os.listdir(DataDirectory)]
+    Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('M.jpg')]
     Pictures.sort()
 
     # Build data frame
