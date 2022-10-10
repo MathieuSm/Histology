@@ -1,3 +1,5 @@
+#%%
+
 #!/usr/bin/env python3
 
 """
@@ -8,12 +10,12 @@ https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_trainable_s
 import os
 import time
 import joblib
-import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn import metrics
 import matplotlib.pyplot as plt
+from skimage.util import view_as_windows
 from sklearn.ensemble import RandomForestClassifier
 from matplotlib.colors import LinearSegmentedColormap
 from skimage import io, future, exposure, morphology, color
@@ -24,6 +26,7 @@ plt.rc('font', size=12)
 
 Version = '01'
 
+#%%
 # Define the script description
 Description = """
     This script creates and train a random forest classifier for cement lines segmentation in the curse
@@ -131,6 +134,30 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
         plt.show()
 
     return Label, Ticks
+
+def HCFeatures(ImagesDict):
+
+    Widths = [5, 10, 20, 50]
+    Features = {}
+    print('\nExtract ROI features')
+    Tic = time.time()
+    for K in ImagesDict.keys():
+        print(K)
+        ROI = ImagesDict[K]['ROI']
+        ROIFeatures = np.zeros((ROI.shape[0], ROI.shape[1], len(Widths) + 6))
+        ROIFeatures[:, :, :3] = ROI
+        ROIFeatures[:, :, 3:6] = color.rgb2hsv(ROI)
+        for iW, WindowHalfWidth in enumerate(Widths):
+            Values = ROI.sum(axis=-1)
+            pROI = np.pad(Values, WindowHalfWidth, 'symmetric')
+            VaW = view_as_windows(pROI, WindowHalfWidth * 2 + 1)
+            Convolution = VaW.sum(axis=(-1, -2))
+            ROIFeatures[:, :, iW + 6] = Convolution
+        Features[K] = ROIFeatures
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Features
 
 def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
 
@@ -372,8 +399,7 @@ def PlotResults(ROI,Results, FileName=None):
         plt.savefig(FileName[:-4] + '_Seg.png')
     plt.show()
 
-
-
+#%%
 class PCNNClass:
 
     def __init__(self):
@@ -597,8 +623,8 @@ PCNN = PCNNClass()
 class ArgumentsClass:
 
     def __init__(self):
-        self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
-        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Data = str(Path.cwd()  / 'Data')
+        self.Path =  Path.cwd() # / 'Scripts'/ 'Pipeline'
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
@@ -608,289 +634,279 @@ class ArgumentsClass:
         self.Margin = 100
 Arguments = ArgumentsClass()
 
+#%%
 
-def Main(Arguments):
+# List manually segmented pictures
+DataDirectory = str(Arguments.Path / 'ManualSegmentation')
+Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
+Pictures.sort()
 
-    # List manually segmented pictures
-    DataDirectory = str(Path(Arguments.Path, 'ManualSegmentation'))
-    Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
-    Pictures.sort()
-
-    # Store training and test pictures
-    PicturesData = {}
-    for iPicture, Picture in enumerate(Pictures):
-        PicturesData[Picture[:-8]] = {}
-        PicturesData[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-        Seg = io.imread(str(Path(DataDirectory, Picture)))
-        PicturesData[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=iPicture < 1)[0]
+# Store training and test pictures
+PicturesData = {}
+for iPicture, Picture in enumerate(Pictures):
+    PicturesData[Picture[:-8]] = {}
+    PicturesData[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
+    Seg = io.imread(str(Path(DataDirectory, Picture)))
+    PicturesData[Picture[:-8]]['Labels'] = ExtractLabels(Seg,DilateCM=iPicture < 1, Plot=False)[0]
 
 
-    ## 01 Investigate features selection
-    print('\nExtract manual segmentation features')
-    Tic = time.time()
-    Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
-    # Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['H1', 'H2'], [0.5, 16])
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+#%%
+# Segment Harvesian canals
+HC_F = HCFeatures(PicturesData)
+HC_C = joblib.load(str(Arguments.Path / 'HCC.joblib'))
 
-    # Build data arrays
-    FeaturesData = []
-    LabelData = []
-    for Key in Features.keys():
-        ROIFeatures = Features[Key]
-        FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
-        Labels = PicturesData[Key]['Labels']
-        LabelData.append(Labels.ravel())
-    FeaturesData = np.vstack(FeaturesData)
-    LabelData = np.hstack(LabelData)
 
-    # Filter out non labelled data
-    FeaturesData = FeaturesData[LabelData > 0]
-    LabelData = LabelData[LabelData > 0]
 
-    # Store into data frame
-    Data = pd.DataFrame(FeaturesData)
-    Data['Labels'] = LabelData
+#%%
+## 01 Investigate features selection
+print('\nExtract manual segmentation features')
+Tic = time.time()
+Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
+# Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['H1', 'H2'], [0.5, 16])
+Toc = time.time()
+PrintTime(Tic, Toc)
+
+
+# Build data arrays
+FeaturesData = []
+LabelData = []
+for Key in Features.keys():
+    ROIFeatures = Features[Key]
+    FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
+    Labels = PicturesData[Key]['Labels']
+    LabelData.append(Labels.ravel())
+FeaturesData = np.vstack(FeaturesData)
+LabelData = np.hstack(LabelData)
+
+# Filter out non labelled data
+FeaturesData = FeaturesData[LabelData > 0]
+LabelData = LabelData[LabelData > 0]
+
+# Store into data frame
+Data = pd.DataFrame(FeaturesData)
+Data['Labels'] = LabelData
+
+# Split training and test data
+Train, Test = train_test_split(Data)
+TrainFeatures = Train.drop('Labels', axis=1)
+TestFeatures = Test.drop('Labels', axis=1)
+TrainLabels = Train['Labels']
+TestLabels = Test['Labels']
+
+# Fit classifier and record metrics
+FeaturesScore = pd.DataFrame({'Accuracy':[0.954343, 0.961010, 0.958341],
+                                'Time':[160.316673, 162.538473, 185],
+                                'Type':['RGB', 'HSV', 'Lab']},index=[0,1,2])
+Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
+
+i = 11
+Tic = time.time()
+Classifier.fit(TrainFeatures, TrainLabels)
+Toc = time.time()
+Predictions = Classifier.predict(TestFeatures)
+FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
+FeaturesScore.loc[i, 'Time'] = Toc - Tic
+FeaturesScore.loc[i, 'Type'] = 'HSV'
+FeaturesScore.loc[i, 'nFeatures'] = 36.0
+
+Figure, Axis = plt.subplots(1,1)
+i = 0
+Colors = [(1,0,0),(0,1,0),(0,0,1)]
+for L, D in FeaturesScore.groupby('Type'):
+    S = D.sort_values(by='nFeatures')
+    Axis.plot(S['nFeatures'],S['Time'],color=Colors[i], marker='o', linestyle='--', label=L)
+    i += 1
+Axis.set_xlabel('Features number (-)')
+Axis.set_ylabel('Fitting time (s)')
+plt.legend()
+plt.show()
+
+Figure, Axis = plt.subplots(1,1)
+i = 0
+Colors = [(1,0,0),(0,1,0),(0,0,1)]
+for L, D in FeaturesScore.groupby('Type'):
+    S = D.sort_values(by='nFeatures')
+    Axis.plot(S['nFeatures'],S['Accuracy'], marker='o', color=Colors[i], linestyle='--', label=L)
+    i += 1
+Axis.set_xlabel('Features number (-)')
+Axis.set_ylabel('Prediction accuracy (-)')
+plt.legend()
+plt.show()
+
+for V in ['Accuracy','Time']:
+    Figure, Axis = plt.subplots(1,1)
+    Axis.bar(np.arange(3), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
+    Axis.set_xticks(np.arange(3),FeaturesScore['Type'])
+    Axis.set_xlabel('Color space (-)')
+    Axis.set_ylabel(V)
+    plt.subplots_adjust(0.15,0.15,0.85,0.9)
+    plt.show()
+
+FI = PlotFeatureImportance(Classifier, FNames.Names)
+FI = FI.sort_values(by='Importance', ascending=False)
+FI['Cum Sum'] = FI['Importance'].cumsum()
+Figure, Axis = plt.subplots(1, 1)
+Axis.plot(FI['Cum Sum'].values, color=(1, 0, 0), marker='o', linestyle='--', fillstyle='none')
+Axis.set_ylim([0, 1.05])
+Axis.set_ylabel('Relative importance (-)')
+Axis.set_xlabel('Feature number (-)')
+plt.show()
+
+# 02 Under sample to investigate data quantity impact
+MinClass = Data['Labels'].value_counts().min()
+Samplings = np.logspace(np.log2(100), np.log2(MinClass), num=5, base=2)
+
+UnderScore = pd.DataFrame(columns=['Accuracy', 'Time'])
+for i, Sampling in enumerate(Samplings):
+
+    # Sample data and set classifier with standard parameters
+    UnderData = Data.groupby('Labels').sample(int(Sampling.round()))
+    Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
 
     # Split training and test data
-    Train, Test = train_test_split(Data)
+    Train, Test = train_test_split(UnderData)
     TrainFeatures = Train.drop('Labels', axis=1)
     TestFeatures = Test.drop('Labels', axis=1)
     TrainLabels = Train['Labels']
     TestLabels = Test['Labels']
 
     # Fit classifier and record metrics
-    FeaturesScore = pd.DataFrame({'Accuracy':[0.954343, 0.961010, 0.958341],
-                                  'Time':[160.316673, 162.538473, 185],
-                                  'Type':['RGB', 'HSV', 'Lab']},index=[0,1,2])
-    Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
-
-    i = 11
     Tic = time.time()
     Classifier.fit(TrainFeatures, TrainLabels)
     Toc = time.time()
     Predictions = Classifier.predict(TestFeatures)
-    FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
-    FeaturesScore.loc[i, 'Time'] = Toc - Tic
-    FeaturesScore.loc[i, 'Type'] = 'HSV'
-    FeaturesScore.loc[i, 'nFeatures'] = 36.0
+    UnderScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
+    UnderScore.loc[i, 'Time'] = Toc - Tic
+    UnderScore.loc[i, 'N'] = round(Sampling)
 
-    Figure, Axis = plt.subplots(1,1)
-    i = 0
-    Colors = [(1,0,0),(0,1,0),(0,0,1)]
-    for L, D in FeaturesScore.groupby('Type'):
-        S = D.sort_values(by='nFeatures')
-        Axis.plot(S['nFeatures'],S['Time'],color=Colors[i], marker='o', linestyle='--', label=L)
-        i += 1
-    Axis.set_xlabel('Features number (-)')
-    Axis.set_ylabel('Fitting time (s)')
-    plt.legend()
-    plt.show()
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(Samplings, UnderScore['Time'], color=(1,0,0), marker='o', linestyle='--')
+Axis.set_xlabel('Sampling (-)')
+Axis.set_ylabel('Time (s)')
+Axis.set_xscale('log')
+Axis.set_yscale('log')
+plt.subplots_adjust(0.15,0.15,0.85,0.9)
+plt.show()
 
-    Figure, Axis = plt.subplots(1,1)
-    i = 0
-    Colors = [(1,0,0),(0,1,0),(0,0,1)]
-    for L, D in FeaturesScore.groupby('Type'):
-        S = D.sort_values(by='nFeatures')
-        Axis.plot(S['nFeatures'],S['Accuracy'], marker='o', color=Colors[i], linestyle='--', label=L)
-        i += 1
-    Axis.set_xlabel('Features number (-)')
-    Axis.set_ylabel('Prediction accuracy (-)')
-    plt.legend()
-    plt.show()
-
-    for V in ['Accuracy','Time']:
-        Figure, Axis = plt.subplots(1,1)
-        Axis.bar(np.arange(3), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
-        Axis.set_xticks(np.arange(3),FeaturesScore['Type'])
-        Axis.set_xlabel('Color space (-)')
-        Axis.set_ylabel(V)
-        plt.subplots_adjust(0.15,0.15,0.85,0.9)
-        plt.show()
-
-    FI = PlotFeatureImportance(Classifier, FNames.Names)
-    FI = FI.sort_values(by='Importance', ascending=False)
-    FI['Cum Sum'] = FI['Importance'].cumsum()
-    Figure, Axis = plt.subplots(1, 1)
-    Axis.plot(FI['Cum Sum'].values, color=(1, 0, 0), marker='o', linestyle='--', fillstyle='none')
-    Axis.set_ylim([0, 1.05])
-    Axis.set_ylabel('Relative importance (-)')
-    Axis.set_xlabel('Feature number (-)')
-    plt.show()
-
-    # 02 Under sample to investigate data quantity impact
-    MinClass = Data['Labels'].value_counts().min()
-    Samplings = np.logspace(np.log2(100), np.log2(MinClass), num=5, base=2)
-
-    UnderScore = pd.DataFrame(columns=['Accuracy', 'Time'])
-    for i, Sampling in enumerate(Samplings):
-
-        # Sample data and set classifier with standard parameters
-        UnderData = Data.groupby('Labels').sample(int(Sampling.round()))
-        Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
-
-        # Split training and test data
-        Train, Test = train_test_split(UnderData)
-        TrainFeatures = Train.drop('Labels', axis=1)
-        TestFeatures = Test.drop('Labels', axis=1)
-        TrainLabels = Train['Labels']
-        TestLabels = Test['Labels']
-
-        # Fit classifier and record metrics
-        Tic = time.time()
-        Classifier.fit(TrainFeatures, TrainLabels)
-        Toc = time.time()
-        Predictions = Classifier.predict(TestFeatures)
-        UnderScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
-        UnderScore.loc[i, 'Time'] = Toc - Tic
-        UnderScore.loc[i, 'N'] = round(Sampling)
-
-    Figure, Axis = plt.subplots(1,1)
-    Axis.plot(Samplings, UnderScore['Time'], color=(1,0,0), marker='o', linestyle='--')
-    Axis.set_xlabel('Sampling (-)')
-    Axis.set_ylabel('Time (s)')
-    Axis.set_xscale('log')
-    Axis.set_yscale('log')
-    plt.subplots_adjust(0.15,0.15,0.85,0.9)
-    plt.show()
-
-    Figure, Axis = plt.subplots(1, 1)
-    Axis.plot(Samplings, UnderScore['Accuracy'], color=(1, 0, 0), marker='o', linestyle='--')
-    Axis.set_xlabel('Sampling (-)')
-    Axis.set_ylabel('Accuracy (-)')
-    Axis.set_xscale('log')
-    plt.subplots_adjust(0.15, 0.15, 0.85, 0.9)
-    plt.show()
+Figure, Axis = plt.subplots(1, 1)
+Axis.plot(Samplings, UnderScore['Accuracy'], color=(1, 0, 0), marker='o', linestyle='--')
+Axis.set_xlabel('Sampling (-)')
+Axis.set_ylabel('Accuracy (-)')
+Axis.set_xscale('log')
+plt.subplots_adjust(0.15, 0.15, 0.85, 0.9)
+plt.show()
 
 
 
-    # Create classifier, assess accuracy and look at default parameters (use subset to speed up the process)
-    Subset = np.random.randint(0,len(TrainLabels),int(len(TrainLabels)/10))
-    Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
-    Classifier.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
-    OriginalPredictions = Classifier.predict(TestFeatures)
-    print('\nModel accuracy:')
-    print(round(metrics.accuracy_score(TestLabels, OriginalPredictions),3))
-    Classifier.get_params()
+# Create classifier, assess accuracy and look at default parameters (use subset to speed up the process)
+Subset = np.random.randint(0,len(TrainLabels),int(len(TrainLabels)/10))
+Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
+Classifier.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
+OriginalPredictions = Classifier.predict(TestFeatures)
+print('\nModel accuracy:')
+print(round(metrics.accuracy_score(TestLabels, OriginalPredictions),3))
+Classifier.get_params()
 
-    # Create parameter grid for randomized search
-    nEstimators = [int(n) for n in np.linspace(start=20, stop=200, num=7)]
-    MaxSamples = [n.round(1) for n in np.linspace(start=0.2, stop=0.8, num=4)]
-    MaxSamples.append(None)
-    RandomGrid = {'n_estimators': nEstimators,
-                  'max_samples': MaxSamples}
+# Create parameter grid for randomized search
+nEstimators = [int(n) for n in np.linspace(start=20, stop=200, num=7)]
+MaxSamples = [n.round(1) for n in np.linspace(start=0.2, stop=0.8, num=4)]
+MaxSamples.append(None)
+RandomGrid = {'n_estimators': nEstimators,
+                'max_samples': MaxSamples}
 
-    # Random search of parameters, using 3 folds cross validation,
-    # search across 30 different combinations, and use all available cores
-    RandomSCV = RandomizedSearchCV(estimator=Classifier,
-                                   param_distributions=RandomGrid,
-                                   n_iter=30, cv=3, n_jobs=-1, verbose=2)
-    # Fit the random search model to find best parameters
-    RandomSCV.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
-    Best = RandomSCV.best_estimator_
-    RandomSCV.best_params_
+# Random search of parameters, using 3 folds cross validation,
+# search across 30 different combinations, and use all available cores
+RandomSCV = RandomizedSearchCV(estimator=Classifier,
+                                param_distributions=RandomGrid,
+                                n_iter=30, cv=3, n_jobs=-1, verbose=2)
+# Fit the random search model to find best parameters
+RandomSCV.fit(TrainFeatures.iloc[Subset],TrainLabels.iloc[Subset])
+Best = RandomSCV.best_estimator_
+RandomSCV.best_params_
 
-    # Check accuracy improvement
-    OptimizedPredictions = Best.predict(TestFeatures)
-    print('\nModel accuracy:')
-    print(round(metrics.accuracy_score(TestLabels, OptimizedPredictions), 3))
+# Check accuracy improvement
+OptimizedPredictions = Best.predict(TestFeatures)
+print('\nModel accuracy:')
+print(round(metrics.accuracy_score(TestLabels, OptimizedPredictions), 3))
 
-    # Use previous results to perform grid search
-    nEstimators = [150, 200, 250, 300]
-    MaxSamples = [0.8, None]
-    ParamGrid = {'n_estimators': nEstimators,
-                  'max_samples': MaxSamples}
-    GridSCV = GridSearchCV(estimator=Classifier, param_grid=ParamGrid, cv=3, n_jobs=-1, verbose=2)
-    # Fit the random search model to find best parameters
-    GridSCV.fit(TrainFeatures.iloc[Subset], TrainLabels.iloc[Subset])
-    Best = GridSCV.best_estimator_
-    GridSCV.best_params_
+# Use previous results to perform grid search
+nEstimators = [150, 200, 250, 300]
+MaxSamples = [0.8, None]
+ParamGrid = {'n_estimators': nEstimators,
+                'max_samples': MaxSamples}
+GridSCV = GridSearchCV(estimator=Classifier, param_grid=ParamGrid, cv=3, n_jobs=-1, verbose=2)
+# Fit the random search model to find best parameters
+GridSCV.fit(TrainFeatures.iloc[Subset], TrainLabels.iloc[Subset])
+Best = GridSCV.best_estimator_
+GridSCV.best_params_
 
-    # Check accuracy improvement
-    BestPredictions = Best.predict(TestFeatures)
-    print('\nModel accuracy:')
-    print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
+# Check accuracy improvement
+BestPredictions = Best.predict(TestFeatures)
+print('\nModel accuracy:')
+print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
 
-    # Check accuracy of both models with full data
-    Classifier.fit(TrainFeatures,TrainLabels)
-    OriginalPredictions = Classifier.predict(TestFeatures)
-    print('\nOriginal model accuracy:')
-    print(round(metrics.accuracy_score(TestLabels, OriginalPredictions), 3))
-    Best.fit(TrainFeatures,TrainLabels)
-    BestPredictions = Best.predict(TestFeatures)
-    print('\nBest model accuracy:')
-    print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
+# Check accuracy of both models with full data
+Classifier.fit(TrainFeatures,TrainLabels)
+OriginalPredictions = Classifier.predict(TestFeatures)
+print('\nOriginal model accuracy:')
+print(round(metrics.accuracy_score(TestLabels, OriginalPredictions), 3))
+Best.fit(TrainFeatures,TrainLabels)
+BestPredictions = Best.predict(TestFeatures)
+print('\nBest model accuracy:')
+print(round(metrics.accuracy_score(TestLabels, BestPredictions), 3))
 
-    Report = metrics.classification_report(TestLabel[TestLabel > 0], Optimized[TestLabel > 0])
-    print(Report)
+Report = metrics.classification_report(TestLabel[TestLabel > 0], Optimized[TestLabel > 0])
+print(Report)
 
-    # Create and train classifier
-    print('\nCreate and train random forest classifier')
-    Tic = time.time()
-    Classifier = future.fit_segmenter(TrainLabel, TrainData, Classifier)
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+# Create and train classifier
+print('\nCreate and train random forest classifier')
+Tic = time.time()
+Classifier = future.fit_segmenter(TrainLabel, TrainData, Classifier)
+Toc = time.time()
+PrintTime(Tic, Toc)
 
-    # Perform predictions
-    print('\nPerform preditions and assess model')
-    Tic = time.time()
-    Results = future.predict_segmenter(TrainData, Classifier)
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+# Perform predictions
+print('\nPerform preditions and assess model')
+Tic = time.time()
+Results = future.predict_segmenter(TrainData, Classifier)
+Toc = time.time()
+PrintTime(Tic, Toc)
 
-    # Assess model
-    CM = PlotConfusionMatrix(TrainLabel, Results, Ticks)
+# Assess model
+CM = PlotConfusionMatrix(TrainLabel, Results, Ticks)
 
-    # Print report
-    Report = metrics.classification_report(Label.ravel(),Results.ravel())
-    print(Report)
+# Print report
+Report = metrics.classification_report(Label.ravel(),Results.ravel())
+print(Report)
 
-    # Feature importance
-    FI = PlotFeatureImportance(Classifier, FNames.Names)
-    FI = FI.sort_values(by='Importance',ascending=False)
-    FI['Cum Sum'] = FI['Importance'].cumsum()
-    Figure, Axis = plt.subplots(1,1)
-    Axis.plot(FI['Cum Sum'].values, color=(1,0,0), marker='o', linestyle='--', fillstyle='none')
-    Axis.set_ylim([0,1.05])
-    Axis.set_ylabel('Relative importance (-)')
-    Axis.set_xlabel('Feature number (-)')
-    plt.show()
-    FI[FI['Cum Sum'] < 0.8]['Importance'].value_counts()
+# Feature importance
+FI = PlotFeatureImportance(Classifier, FNames.Names)
+FI = FI.sort_values(by='Importance',ascending=False)
+FI['Cum Sum'] = FI['Importance'].cumsum()
+Figure, Axis = plt.subplots(1,1)
+Axis.plot(FI['Cum Sum'].values, color=(1,0,0), marker='o', linestyle='--', fillstyle='none')
+Axis.set_ylim([0,1.05])
+Axis.set_ylabel('Relative importance (-)')
+Axis.set_xlabel('Feature number (-)')
+plt.show()
+FI[FI['Cum Sum'] < 0.8]['Importance'].value_counts()
 
-    # Assess model with test image
-    print('\nPerform preditions of test image')
-    Tic = time.time()
-    Results = future.predict_segmenter(TestData, Classifier)
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+# Assess model with test image
+print('\nPerform preditions of test image')
+Tic = time.time()
+Results = future.predict_segmenter(TestData, Classifier)
+Toc = time.time()
+PrintTime(Tic, Toc)
 
-    # Assess model
-    CM = PlotConfusionMatrix(TestLabel[TestLabel > 0], Results[TestLabel > 0], Ticks)
-    PlotResults(Test['ROI_3']['ROI'], np.reshape(Results,Test['ROI_3']['Labels'].shape))
-
-
-    if Arguments.Save:
-        joblib.dump(Classifier,str(Path(Arguments.Path, 'RFC.joblib')))
-
-    Dict = {'Confusion Matrix':CM,
-            'Feature Importance': FI}
-    return Dict
+# Assess model
+CM = PlotConfusionMatrix(TestLabel[TestLabel > 0], Results[TestLabel > 0], Ticks)
+PlotResults(Test['ROI_3']['ROI'], np.reshape(Results,Test['ROI_3']['Labels'].shape))
 
 
-if __name__ == '__main__':
-    # Initiate the parser with a description
-    Parser = argparse.ArgumentParser(description=Description, formatter_class=argparse.RawDescriptionHelpFormatter)
+if Arguments.Save:
+    joblib.dump(Classifier,str(Path(Arguments.Path, 'RFC.joblib')))
 
-    # Add long and short argument
-    ScriptVersion = Parser.prog + ' version ' + Version
-    Parser.add_argument('-v', '--Version', help='Show script version', action='version', version=ScriptVersion)
-    Parser.add_argument('-s', '--Save', help='Save the trained classifier', type=bool, default=False)
-
-    # Define paths
-    DataDirectory = str(Path.cwd() / 'Scripts' / 'Pipeline')
-    Parser.add_argument('-Path', help='Set data directory', type=str, default=DataDirectory)
-
-    # Read arguments from the command line
-    Arguments = Parser.parse_args()
-
-    Main(Arguments)
+Dict = {'Confusion Matrix':CM,
+        'Feature Importance': FI}
+return Dict
+# %%
