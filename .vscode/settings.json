@@ -1,0 +1,5 @@
+{
+    "jupyter.interactiveWindowMode": "single",
+    "jupyter.sendSelectionToInteractiveWindow": true,
+    "jupyter.themeMatplotlibPlots": true
+}

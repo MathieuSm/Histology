@@ -135,29 +135,29 @@ def ExtractLabels(Seg, DilateCM=False, Plot=True):
 
     return Label, Ticks
 
-def HCFeatures(ImagesDict):
+def SegmentBone(Image, Plot=False):
 
-    Widths = [5, 10, 20, 50]
-    Features = {}
-    print('\nExtract ROI features')
-    Tic = time.time()
-    for K in ImagesDict.keys():
-        print(K)
-        ROI = ImagesDict[K]['ROI']
-        ROIFeatures = np.zeros((ROI.shape[0], ROI.shape[1], len(Widths) + 6))
-        ROIFeatures[:, :, :3] = ROI
-        ROIFeatures[:, :, 3:6] = color.rgb2hsv(ROI)
-        for iW, WindowHalfWidth in enumerate(Widths):
-            Values = ROI.sum(axis=-1)
-            pROI = np.pad(Values, WindowHalfWidth, 'symmetric')
-            VaW = view_as_windows(pROI, WindowHalfWidth * 2 + 1)
-            Convolution = VaW.sum(axis=(-1, -2))
-            ROIFeatures[:, :, iW + 6] = Convolution
-        Features[K] = ROIFeatures
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+    """
+    Segment bone area using simple threshold
+    """
 
-    return Features
+    # Mark areas where there is bone
+    Filter1 = Image[:, :, 0] < 190
+    Filter2 = Image[:, :, 1] < 190
+    Filter3 = Image[:, :, 2] < 235
+    Bone = Filter1 & Filter2 & Filter3
+
+    if Plot:
+        PlotImage(~Bone)
+
+    # Erode and dilate to remove small bone parts
+    Bone = morphology.remove_small_objects(~Bone, 15)
+    Bone = morphology.binary_closing(Bone, morphology.disk(25))
+
+    if Plot:
+        PlotImage(Bone)
+
+    return ~Bone
 
 def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
 
@@ -173,7 +173,7 @@ def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[
         T = 'H1' in Features
 
         # Determine array shape
-        ROI = Dict[Key]['ROI']
+        ROI = Dict[Key]['Matched']
         if nSigma:
             NumSigma = nSigma
         else:
@@ -619,6 +619,7 @@ class PCNNClass:
         return Output
 PCNN = PCNNClass()
 
+#%%
 # For testing purpose
 class ArgumentsClass:
 
@@ -652,28 +653,66 @@ for iPicture, Picture in enumerate(Pictures):
 
 #%%
 # Segment Harvesian canals
-HC_F = HCFeatures(PicturesData)
-HC_C = joblib.load(str(Arguments.Path / 'HCC.joblib'))
 
+print('\nSegment bone')
+Tic = time.time()
+for ROI in PicturesData.keys():
+    print(ROI)
+    Image = PicturesData[ROI]['ROI']
+    Bone = SegmentBone(Image,Plot=False)
+    PicturesData[ROI]['Bone'] = Bone
+Toc = time.time()
+PrintTime(Tic,Toc)
 
+#%%
+# Match histograms to reference
+
+Reference = io.imread(str(Arguments.Path / 'Reference.png'))[:,:,:3]
+
+print('\nMatch histograms')
+Tic = time.time()
+for ROI in PicturesData.keys():
+    print(ROI)
+    Image = PicturesData[ROI]['ROI'].copy()
+    Bone = PicturesData[ROI]['Bone']
+    Pixels = Image[Bone]
+    Width = np.ceil(np.sqrt(Pixels.shape[0])).astype('int')
+    while np.mod(Pixels.shape[0], Width):
+        Width += 1
+    Height = (Pixels.shape[0] / Width).astype('int')
+    Pixels = np.reshape(Pixels, (Width, Height, 3))
+    Matched = exposure.match_histograms(Pixels, Reference, multichannel=True)
+    print(np.sum(Image[Bone] - np.reshape(Matched,Image[Bone].shape)))
+    Image[Bone] = np.reshape(Matched,Image[Bone].shape)
+    PicturesData[ROI]['Matched'] = Image
+Toc = time.time()
+PrintTime(Tic,Toc)
 
 #%%
 ## 01 Investigate features selection
 print('\nExtract manual segmentation features')
 Tic = time.time()
-Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 8], nSigma=3)
-# Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['H1', 'H2'], [0.5, 16])
+Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 32], nSigma=3)
+
+# # Add distance variable
+# for ROI in Features.keys():
+#     Distances = morphology.medial_axis(~PicturesData[ROI]['Bone'], return_distance=True)[1]
+#     Features[ROI] = np.dstack([Features[ROI], Distances])
+
+# FNames.Names = FNames.Names.append('Distance')
 Toc = time.time()
 PrintTime(Tic, Toc)
 
+#%%
 
 # Build data arrays
 FeaturesData = []
 LabelData = []
 for Key in Features.keys():
-    ROIFeatures = Features[Key]
+    Bone = PicturesData[Key]['Bone']
+    ROIFeatures = Features[Key][Bone]
     FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
-    Labels = PicturesData[Key]['Labels']
+    Labels = PicturesData[Key]['Labels'][Bone]
     LabelData.append(Labels.ravel())
 FeaturesData = np.vstack(FeaturesData)
 LabelData = np.hstack(LabelData)
@@ -693,25 +732,31 @@ TestFeatures = Test.drop('Labels', axis=1)
 TrainLabels = Train['Labels']
 TestLabels = Test['Labels']
 
+#%%
+
 # Fit classifier and record metrics
-FeaturesScore = pd.DataFrame({'Accuracy':[0.954343, 0.961010, 0.958341],
-                                'Time':[160.316673, 162.538473, 185],
-                                'Type':['RGB', 'HSV', 'Lab']},index=[0,1,2])
+# FeaturesScore = pd.DataFrame({'Accuracy':[0.941121, 0.940428, 0.958341],
+#                                 'Time':[541, 438, 185],
+#                                 'Type':['RGB+HSV', 'HSV', 'Lab'],
+#                                 'nFeatures':[55,27,27]},index=[0,1,2])
+# FeaturesScore = pd.DataFrame()
 Classifier = RandomForestClassifier(n_jobs=-1, verbose=1)
 
-i = 11
-Tic = time.time()
+i = 1
 Classifier.fit(TrainFeatures, TrainLabels)
-Toc = time.time()
+Tic = time.time()
 Predictions = Classifier.predict(TestFeatures)
+Toc = time.time()
+
 FeaturesScore.loc[i, 'Accuracy'] = metrics.accuracy_score(TestLabels, Predictions)
 FeaturesScore.loc[i, 'Time'] = Toc - Tic
 FeaturesScore.loc[i, 'Type'] = 'HSV'
-FeaturesScore.loc[i, 'nFeatures'] = 36.0
+FeaturesScore.loc[i, 'nFeatures'] = 27.0
 
+#%%
 Figure, Axis = plt.subplots(1,1)
 i = 0
-Colors = [(1,0,0),(0,1,0),(0,0,1)]
+Colors = [(0,1,1),(1,0,0),(0,1,0),(0,0,1)]
 for L, D in FeaturesScore.groupby('Type'):
     S = D.sort_values(by='nFeatures')
     Axis.plot(S['nFeatures'],S['Time'],color=Colors[i], marker='o', linestyle='--', label=L)
@@ -723,7 +768,7 @@ plt.show()
 
 Figure, Axis = plt.subplots(1,1)
 i = 0
-Colors = [(1,0,0),(0,1,0),(0,0,1)]
+Colors = [(0,1,1),(1,0,0),(0,1,0),(0,0,1)]
 for L, D in FeaturesScore.groupby('Type'):
     S = D.sort_values(by='nFeatures')
     Axis.plot(S['nFeatures'],S['Accuracy'], marker='o', color=Colors[i], linestyle='--', label=L)
@@ -735,8 +780,8 @@ plt.show()
 
 for V in ['Accuracy','Time']:
     Figure, Axis = plt.subplots(1,1)
-    Axis.bar(np.arange(3), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
-    Axis.set_xticks(np.arange(3),FeaturesScore['Type'])
+    Axis.bar(np.arange(len(FeaturesScore['Type'].unique())), FeaturesScore[V], edgecolor=(1,0,0), facecolor=(0, 0, 0, 0))
+    Axis.set_xticks(np.arange(len(FeaturesScore['Type'].unique())),FeaturesScore['Type'])
     Axis.set_xlabel('Color space (-)')
     Axis.set_ylabel(V)
     plt.subplots_adjust(0.15,0.15,0.85,0.9)
@@ -751,6 +796,8 @@ Axis.set_ylim([0, 1.05])
 Axis.set_ylabel('Relative importance (-)')
 Axis.set_xlabel('Feature number (-)')
 plt.show()
+
+#%%
 
 # 02 Under sample to investigate data quantity impact
 MinClass = Data['Labels'].value_counts().min()

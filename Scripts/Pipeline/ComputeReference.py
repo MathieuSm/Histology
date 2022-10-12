@@ -1,3 +1,4 @@
+#%%
 #!/usr/bin/env python3
 
 import os
@@ -50,30 +51,21 @@ def SegmentBone(Image, Plot=False):
     Tic = time.time()
     print('\nSegment bone area ...')
 
-    # Mark areas where there is bone
+        # Mark areas where there is bone
     Filter1 = Image[:, :, 0] < 190
     Filter2 = Image[:, :, 1] < 190
     Filter3 = Image[:, :, 2] < 235
     Bone = Filter1 & Filter2 & Filter3
 
     if Plot:
-        Shape = np.array(Image.shape) / max(Image.shape) * 10
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Image)
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Bone, cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
+        PlotImage(~Bone)
 
     # Erode and dilate to remove small bone parts
-    Disk = morphology.disk(2)
-    Dilated = morphology.binary_dilation(Bone, Disk)
-    Bone = morphology.binary_erosion(Dilated, Disk)
+    Bone = morphology.remove_small_objects(~Bone, 15)
+    Bone = morphology.binary_closing(Bone, morphology.disk(25))
+
+    if Plot:
+        PlotImage(Bone)
 
     # Print elapsed time
     Toc = time.time()
@@ -128,17 +120,20 @@ def ValidArea(Bone, GridSize, Threshold, Plot=False):
 
     return ValidArea
 
+#%%
 
 # For testing purpose
 class ArgumentsClass:
 
     def __init__(self):
-        self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
-        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Data = str(Path.cwd() / 'Data')
+        self.Path = str(Path.cwd())
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
 Arguments = ArgumentsClass()
+
+#%%
 
 def Main(Arguments):
 
@@ -155,11 +150,11 @@ def Main(Arguments):
 
         Array = io.imread(str(Path(DataDirectory, Name)))
         Bone = SegmentBone(Array, Plot=False)
-        GridSize = int(Arguments.ROI_S / Arguments.Pixel_S * 1.2)
-        BoneVA = ValidArea(Bone, GridSize, Threshold, Plot=True)
+        # GridSize = int(Arguments.ROI_S / Arguments.Pixel_S * 1.2)
+        # BoneVA = ValidArea(Bone, GridSize, Threshold, Plot=True)
 
         for RGB in range(3):
-            ROI = Array[:,:,RGB][BoneVA > 0]
+            ROI = Array[:,:,RGB][~Bone]
             Hists, Bins = np.histogram(ROI, density=False, bins=nBins, range=(0, 255))
             Histograms[Index,RGB] = Hists
     MeanHist = np.mean(Histograms,axis=0).round().astype('int')
@@ -172,10 +167,8 @@ def Main(Arguments):
 
     nPixels = MeanHist.sum(axis=1).max()
     Width = np.ceil(np.sqrt(nPixels)).astype('int')
-    while np.mod(nPixels,Width):
-        Width += 1
-    Height = int(nPixels / Width)
-    Reference = np.ones((Height,Width,3),'int').ravel()
+    Height = np.ceil(nPixels / Width).astype('int')
+    Reference = np.ones((Height,Width,3),'int').ravel() * np.nan
 
     Start = 0
     Stop = 0
@@ -188,11 +181,13 @@ def Main(Arguments):
     FileName = str(Path(Arguments.Path) / 'Reference.png')
     H, W = Reference.shape[:-1]
     Figure, Axis = plt.subplots(1, 1, figsize=(W / 500, H / 500))
-    Axis.imshow(Reference)
+    Axis.imshow(Reference.astype('uint8'))
     Axis.axis('off')
     plt.subplots_adjust(0, 0, 1, 1)
     plt.savefig(FileName)
     plt.show()
+
+#%%
 
 if __name__ == '__main__':
     # Initiate the parser with a description
@@ -213,3 +208,4 @@ if __name__ == '__main__':
     Arguments = Parser.parse_args()
 
     Main(Arguments)
+# %%

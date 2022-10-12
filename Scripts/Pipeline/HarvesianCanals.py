@@ -1,3 +1,4 @@
+#%%
 #!/usr/bin/env python3
 
 """
@@ -161,12 +162,55 @@ def PlotConfusionMatrix(GroundTruth, Results, Ticks=None):
 
     return CM
 
+def SegmentBone(Image, Plot=False):
+
+    """
+    Segment bone structure
+    :param Image: RGB numpy array dim r x c x 3
+    :param Plot: Plot the results (bool)
+    :return: Segmented bone image
+    """
+
+    Tic = time.time()
+    print('\nSegment bone area ...')
+
+    # Mark areas where there is bone
+    Filter1 = Image[:, :, 0] < 190
+    Filter2 = Image[:, :, 1] < 190
+    Filter3 = Image[:, :, 2] < 235
+    Bone = Filter1 & Filter2 & Filter3
+
+    if Plot:
+        Shape = np.array(Image.shape) / max(Image.shape) * 10
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Image)
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
+        Axis.imshow(Bone, cmap='binary')
+        Axis.axis('off')
+        plt.subplots_adjust(0, 0, 1, 1)
+        plt.show()
+
+    # Erode and dilate to remove small bone parts
+    Disk = morphology.disk(2)
+    Dilated = morphology.binary_dilation(Bone, Disk)
+    Bone = morphology.binary_erosion(Dilated, Disk)
+
+    # Print elapsed time
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+    return Bone
+
 # For testing purpose
 class ArgumentsClass:
 
     def __init__(self):
         self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
-        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Path = str(Path.cwd())
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
@@ -177,120 +221,142 @@ class ArgumentsClass:
         self.Margin = 100
 Arguments = ArgumentsClass()
 
+#%%
 
-def Main(Arguments):
+# List manually segmented pictures
+DataDirectory = str(Path(Arguments.Path, 'ManualSegmentation'))
+Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
+Pictures.sort()
 
-    # List manually segmented pictures
-    DataDirectory = str(Path(Arguments.Path, 'ManualSegmentation'))
-    Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
-    Pictures.sort()
+# Store pictures
+PicturesData = {}
+for iPicture, Picture in enumerate(Pictures):
+    PicturesData[Picture[:-8]] = {}
+    ROI = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
+    PlotImage(ROI)
+    Seg = io.imread(str(Path(DataDirectory, Picture)))
+    PlotImage(Seg)
+    PicturesData[Picture[:-8]]['ROI'] = ROI
+    PicturesData[Picture[:-8]]['HC'] = (Seg[:, :, 0] == 255) * (Seg[:, :, 1] == 255)
 
-    # Store pictures
-    PicturesData = {}
-    for iPicture, Picture in enumerate(Pictures[1:]):
-        PicturesData[Picture[:-8]] = {}
-        ROI = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
-        PlotImage(ROI)
-        Seg = io.imread(str(Path(DataDirectory, Picture)))
-        PlotImage(Seg)
-        PicturesData[Picture[:-8]]['ROI'] = ROI
-        PicturesData[Picture[:-8]]['HC'] = (Seg[:, :, 0] == 255) * (Seg[:, :, 1] == 255)
+#%%
 
-    # Perform data augmentation
-    Images = []
-    Labels = []
-    N = 5
-    for K in PicturesData.keys():
-        ROI = PicturesData[K]['ROI']
-        HC = PicturesData[K]['HC'] * 1 + 1
-
-        AugData, AugLabels = DataAugmentation(ROI, HC, N)
-
-        for iN in range(N):
-            Images.append(AugData[iN])
-            Labels.append(AugLabels[iN])
-    Images = np.array(Images)
-    Labels = np.array(Labels).astype('int')
-    Labels = np.expand_dims(Labels, -1)
-
-    # Extract features
-    Features = ExtractFeatures(Images)
-
-    # Filter out non-labeled data
-    Features = Features[:,:,:][Labels[:,:,:,0] > 0]
-    FeaturesLabels = Labels[Labels > 0]
-
-    # Store into data frame and balance sampling
-    Data = pd.DataFrame(Features)
-    Data['Labels'] = FeaturesLabels
-    nLabels = Data.value_counts('Labels').min()
-    Data = Data.groupby('Labels').sample(nLabels)
-
-    # Split training and test data
-    Train, Test = train_test_split(Data)
-    TrainFeatures = Train.drop('Labels', axis=1)
-    TestFeatures = Test.drop('Labels', axis=1)
-    TrainLabels = Train['Labels']
-    TestLabels = Test['Labels']
-
-    # Fit classifier and record metrics
-    Classifier = RandomForestClassifier(n_jobs=-1, verbose=2)
-    Tic = time.time()
-    Classifier.fit(TrainFeatures, TrainLabels)
-    Toc = time.time()
-    Predictions = Classifier.predict(TestFeatures)
-    PrintTime(Tic,Toc)
-
-    # Assess model
-    print('Accuracy: ' + str(round(metrics.accuracy_score(TestLabels, Predictions),2)))
-    CM = PlotConfusionMatrix(TestLabels, Predictions, ['IT','HC'])
-
-    # Check results on images
-    Random = np.random.randint(0, len(Images)-1)
-    Image = Images[Random]
-    Label = Labels[Random]
-    ImageFeatures = ExtractFeatures([Image])[0]
-    Prediction = Classifier.predict(np.reshape(ImageFeatures,(1000*1000,10)))
-    Prediction = Prediction.reshape((1000,1000,1))
-    Prediction[Label == 0] = 1
-    Label[Label == 0] = 1
-
-    Figure, Axis = plt.subplots(1,3)
-    Axis[0].imshow(Image)
-    Axis[0].set_title('Image')
-    Axis[1].imshow(Label,cmap='binary_r')
-    Axis[1].set_title('Ground Truth')
-    Axis[2].imshow(Prediction, cmap='binary_r')
-    Axis[2].set_title('Prediction')
-    for i in range(3):
-        Axis[i].axis('off')
-    plt.tight_layout()
-    plt.show()
-
-    # Dice coefficient
-    2 * np.sum((Label-1)*(Prediction-1)) / np.sum((Label-1) + (Prediction-1))
-
-    # Improve results with morphological operations
-    pPrediction = np.pad(Prediction[:,:,0]-1, 20, 'symmetric').astype('bool')
-    Clean = morphology.remove_small_objects(pPrediction,100)[20:-20,20:-20]
-
-    Figure, Axis = plt.subplots(1,3)
-    Axis[0].imshow(Image)
-    Axis[0].set_title('Image')
-    Axis[1].imshow(Label,cmap='binary_r')
-    Axis[1].set_title('Ground Truth')
-    Axis[2].imshow(Clean, cmap='binary_r')
-    Axis[2].set_title('Prediction')
-    for i in range(3):
-        Axis[i].axis('off')
-    plt.tight_layout()
-    plt.show()
-
-    PlotImage(Label[:,:,0] + Clean)
-
-    # Save model
-    joblib.dump(Classifier,str(Path(Arguments.Path, 'HCC.joblib')))
+# Try to segment Harvesian canals using simple threshold
+for Key in PicturesData.keys():
+    Bone = SegmentBone(PicturesData[Key]['ROI'], Plot=True)
+    PicturesData[Key]['Bone'] = Bone
 
 
+#%%
+
+# Mark areas where there is bone
+Filter1 = PicturesData[Key]['ROI'][:, :, 0] < 190
+Filter2 = PicturesData[Key]['ROI'][:, :, 1] < 190
+Filter3 = PicturesData[Key]['ROI'][:, :, 2] < 235
+Bone = Filter1 & Filter2 & Filter3
+
+PlotImage(~Bone)
+
+# Erode and dilate to remove small bone parts
+Bone = morphology.remove_small_objects(~Bone, 15)
+Bone = morphology.binary_closing(Bone, morphology.disk(25))
+
+PlotImage(Bone)
+
+#%%
+# Perform data augmentation
+Images = []
+Labels = []
+N = 5
+for K in PicturesData.keys():
+    ROI = PicturesData[K]['ROI']
+    HC = PicturesData[K]['HC'] * 1 + 1
+
+    AugData, AugLabels = DataAugmentation(ROI, HC, N)
+
+    for iN in range(N):
+        Images.append(AugData[iN])
+        Labels.append(AugLabels[iN])
+Images = np.array(Images)
+Labels = np.array(Labels).astype('int')
+Labels = np.expand_dims(Labels, -1)
+
+# Extract features
+Features = ExtractFeatures(Images)
+
+# Filter out non-labeled data
+Features = Features[:,:,:][Labels[:,:,:,0] > 0]
+FeaturesLabels = Labels[Labels > 0]
+
+# Store into data frame and balance sampling
+Data = pd.DataFrame(Features)
+Data['Labels'] = FeaturesLabels
+nLabels = Data.value_counts('Labels').min()
+Data = Data.groupby('Labels').sample(nLabels)
+
+# Split training and test data
+Train, Test = train_test_split(Data)
+TrainFeatures = Train.drop('Labels', axis=1)
+TestFeatures = Test.drop('Labels', axis=1)
+TrainLabels = Train['Labels']
+TestLabels = Test['Labels']
+
+# Fit classifier and record metrics
+Classifier = RandomForestClassifier(n_jobs=-1, verbose=2)
+Tic = time.time()
+Classifier.fit(TrainFeatures, TrainLabels)
+Toc = time.time()
+Predictions = Classifier.predict(TestFeatures)
+PrintTime(Tic,Toc)
+
+# Assess model
+print('Accuracy: ' + str(round(metrics.accuracy_score(TestLabels, Predictions),2)))
+CM = PlotConfusionMatrix(TestLabels, Predictions, ['IT','HC'])
+
+# Check results on images
+Random = np.random.randint(0, len(Images)-1)
+Image = Images[Random]
+Label = Labels[Random]
+ImageFeatures = ExtractFeatures([Image])[0]
+Prediction = Classifier.predict(np.reshape(ImageFeatures,(1000*1000,10)))
+Prediction = Prediction.reshape((1000,1000,1))
+Prediction[Label == 0] = 1
+Label[Label == 0] = 1
+
+Figure, Axis = plt.subplots(1,3)
+Axis[0].imshow(Image)
+Axis[0].set_title('Image')
+Axis[1].imshow(Label,cmap='binary_r')
+Axis[1].set_title('Ground Truth')
+Axis[2].imshow(Prediction, cmap='binary_r')
+Axis[2].set_title('Prediction')
+for i in range(3):
+    Axis[i].axis('off')
+plt.tight_layout()
+plt.show()
+
+# Dice coefficient
+2 * np.sum((Label-1)*(Prediction-1)) / np.sum((Label-1) + (Prediction-1))
+
+# Improve results with morphological operations
+pPrediction = np.pad(Prediction[:,:,0]-1, 20, 'symmetric').astype('bool')
+Clean = morphology.remove_small_objects(pPrediction,100)[20:-20,20:-20]
+
+Figure, Axis = plt.subplots(1,3)
+Axis[0].imshow(Image)
+Axis[0].set_title('Image')
+Axis[1].imshow(Label,cmap='binary_r')
+Axis[1].set_title('Ground Truth')
+Axis[2].imshow(Clean, cmap='binary_r')
+Axis[2].set_title('Prediction')
+for i in range(3):
+    Axis[i].axis('off')
+plt.tight_layout()
+plt.show()
+
+PlotImage(Label[:,:,0] + Clean)
+
+# Save model
+joblib.dump(Classifier,str(Path(Arguments.Path, 'HCC.joblib')))
 
 
