@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from skimage.util import view_as_windows
 from sklearn.ensemble import RandomForestClassifier
 from matplotlib.colors import LinearSegmentedColormap
-from skimage import io, future, exposure, morphology, color
+from skimage import io, future, exposure, morphology, color, filters, transform
 from skimage.feature import multiscale_basic_features as mbf
 from sklearn.model_selection import RandomizedSearchCV, train_test_split, GridSearchCV
 
@@ -81,7 +81,7 @@ def PrintTime(Tic, Toc):
 
 def PlotImage(Array):
 
-    Figure, Axis = plt.subplots(1,1,figsize=(10,10))
+    Figure, Axis = plt.subplots(1,1,figsize=(5,5))
     if Array.shape[-1] == 3:
         Axis.imshow(Array)
     else:
@@ -159,10 +159,71 @@ def SegmentBone(Image, Plot=False):
 
     return ~Bone
 
-def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
+def DataAugmentation(Image,Label,Bone,N):
 
-    FeaturesDict = {}
-    for Key in Dict.keys():
+    # Pad image if smaller than ROI size
+    if Arguments.Size >= Image.shape[0]:
+        Pad = Arguments.Size - Image.shape[0] + 1
+        Image = np.pad(Image, ((Pad,Pad),(Pad,Pad),(0,0)), 'symmetric')
+        Label = np.pad(Label, ((Pad,Pad),(Pad,Pad)), 'symmetric')
+        Bone = np.pad(Bone, ((Pad,Pad),(Pad,Pad)), 'symmetric')
+
+    ISize = Image.shape[:-1]
+    ASize = (Arguments.Size, Arguments.Size)
+
+    # Normalize data
+    Image = Image / 255
+    # Label = (Label - Label.min()) / (Label.max() - Label.min())
+    
+        
+
+    Data = []
+    Labels = []
+    Bones = []
+
+    Tic = time.time()
+    print('\nStart data augmentation')
+    for iN in range(N):
+
+        Rot = np.random.randint(0, 360)
+        rImage = transform.rotate(Image, Rot)
+        rLabel = transform.rotate(Label, Rot, order=0, preserve_range=True)
+        rBone = transform.rotate(Bone, Rot, order=0, preserve_range=True)
+
+        Flip = np.random.binomial(1, 0.5, 2)
+        if sum(Flip) == 0:
+            fImage = rImage
+            fLabel = rLabel
+            fBone = rBone
+        if Flip[0] == 1:
+            fImage = rImage[::-1, :, :]
+            fLabel = rLabel[::-1, :]
+            fBone = rBone[::-1, :]
+        if Flip[1] == 1:
+            fImage = rImage[:, ::-1, :]
+            fLabel = rLabel[:, ::-1]
+            fBone = rBone[:, ::-1]
+
+        X1 = np.random.randint(0, ISize[1] - ASize[1] - 1)
+        Y1 = np.random.randint(0, ISize[0] - ASize[0] - 1)
+        X2, Y2 = X1 + ASize[1], Y1 + ASize[0]
+        cImage = fImage[Y1:Y2,X1:X2]
+        cLab = fLabel[Y1:Y2,X1:X2]
+        cBone = fBone[Y1:Y2,X1:X2]
+
+        Data.append(cImage)
+        Labels.append(cLab)
+        Bones.append(cBone)
+
+    Toc = time.time()
+    PrintTime(Tic,Toc)
+
+    return Data, Labels, Bones
+
+def ExtractFeatures(ROIsArray, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[0.5, 8], nSigma=None):
+
+    FeaturesData = []
+    for ROI in ROIsArray:
 
         # Generate features names (for later plotting)
         FNames = FeatureNames(SRange[0], SRange[1], Channels=Channels, Features=Features, nSigma=nSigma)
@@ -173,7 +234,6 @@ def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[
         T = 'H1' in Features
 
         # Determine array shape
-        ROI = Dict[Key]['Matched']
         if nSigma:
             NumSigma = nSigma
         else:
@@ -198,9 +258,9 @@ def ExtractFeatures(Dict, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRange=[
             i += nFeatures
             j += nFeatures
 
-        FeaturesDict[Key] = ROIFeatures
+        FeaturesData.append(ROIFeatures)
 
-    return FeaturesDict, FNames
+    return np.array(FeaturesData), FNames
 
 def PlotConfusionMatrix(GroundTruth, Results, Ticks=None):
 
@@ -629,6 +689,7 @@ class ArgumentsClass:
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
+        self.Size = 1000
 
         # Add margin to ROI to minimize border effects in cleaning morphological operations
         self.Clean = True
@@ -689,17 +750,60 @@ Toc = time.time()
 PrintTime(Tic,Toc)
 
 #%%
+# Perform data augmentation
+Data = []
+Labels = []
+Bones = []
+for K in PicturesData.keys():
+
+    ROI = PicturesData[K]['Matched']
+    Seg = PicturesData[K]['Labels']
+    Bone = PicturesData[K]['Bone'] 
+
+    N = 5
+    AD, AL, AB = DataAugmentation(ROI, Seg, Bone, N)
+
+    for iN in range(N):
+        Data.append(AD[iN])
+        Labels.append(AL[iN])
+        Bones.append(AB[iN])
+Data = np.array(Data)
+Labels = np.array(Labels).astype('int')
+Labels = np.expand_dims(Labels,-1)
+Bones = np.array(Bones).astype('int')
+
+#%%
 ## 01 Investigate features selection
+Smin = 0.5
+Smax = 8
+Snum = 3
+
 print('\nExtract manual segmentation features')
 Tic = time.time()
-Features, FNames = ExtractFeatures(PicturesData, ['HSV'], ['E', 'H1', 'H2'], [0.5, 32], nSigma=3)
+Features, FNames = ExtractFeatures(Data, ['RGB'], ['I', 'E', 'H1', 'H2'], [Smin, Smax], nSigma=Snum)
 
-# # Add distance variable
-# for ROI in Features.keys():
-#     Distances = morphology.medial_axis(~PicturesData[ROI]['Bone'], return_distance=True)[1]
-#     Features[ROI] = np.dstack([Features[ROI], Distances])
+# Add distance variable
+Distances = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+for iROI, ROI in enumerate(Bones):
+    Distance = morphology.medial_axis(ROI, return_distance=True)[1]
+    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+        fDistance = filters.gaussian(Distance,sigma=Sigma)
+        Distances[iROI,:,:,iSigma] = fDistance
+        if iROI == 0:
+            FNames.Names.append('Distance ' + str(Sigma))
 
-# FNames.Names = FNames.Names.append('Distance')
+Features = np.concatenate([Features, Distances], axis=-1)
+
+# Add PCNN segmentation variable
+Seg = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+for iROI, ROI in enumerate(Data):
+    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+        Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=10))
+        if iROI == 0:
+            FNames.Names.append('PCNN ' + str(Sigma))
+
+Features = np.concatenate([Features, Seg], axis=-1)
+
 Toc = time.time()
 PrintTime(Tic, Toc)
 
@@ -708,18 +812,21 @@ PrintTime(Tic, Toc)
 # Build data arrays
 FeaturesData = []
 LabelData = []
-for Key in Features.keys():
-    Bone = PicturesData[Key]['Bone']
-    ROIFeatures = Features[Key][Bone]
-    FeaturesData.append(ROIFeatures.reshape(-1,ROIFeatures.shape[-1]))
-    Labels = PicturesData[Key]['Labels'][Bone]
-    LabelData.append(Labels.ravel())
+for iBone, Bone in enumerate(Bones):
+    ROIFeatures = Features[iBone][Bone == 1]
+    FeaturesData.append(ROIFeatures)
+    ROILabels = Labels[iBone][Bone == 1]
+    LabelData.append(ROILabels)
 FeaturesData = np.vstack(FeaturesData)
 LabelData = np.hstack(LabelData)
 
 # Filter out non labelled data
 FeaturesData = FeaturesData[LabelData > 0]
 LabelData = LabelData[LabelData > 0]
+
+# Filter out Harvesian canals
+FeaturesData = FeaturesData[LabelData < 4]
+LabelData = LabelData[LabelData < 4]
 
 # Store into data frame
 Data = pd.DataFrame(FeaturesData)
@@ -956,4 +1063,4 @@ if Arguments.Save:
 Dict = {'Confusion Matrix':CM,
         'Feature Importance': FI}
 return Dict
-# %%
+#%%
