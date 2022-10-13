@@ -1,3 +1,4 @@
+#%%
 #!/usr/bin/env python3
 
 import os
@@ -10,9 +11,10 @@ import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
-from skimage import io, future, exposure, morphology, measure
+from skimage import io, future, filters, morphology, measure, color
 from statsmodels.regression.mixed_linear_model import MixedLMParams
 
+#%%
 Version = '01'
 
 # Define the script description
@@ -55,14 +57,8 @@ def PrintTime(Tic, Toc):
 def SegmentBone(Image, Plot=False):
 
     """
-    Segment bone structure
-    :param Image: RGB numpy array dim r x c x 3
-    :param Plot: Plot the results (bool)
-    :return: Segmented bone image
+    Segment bone area using simple threshold
     """
-
-    Tic = time.time()
-    print('\nSegment bone area ...')
 
     # Mark areas where there is bone
     Filter1 = Image[:, :, 0] < 190
@@ -71,27 +67,19 @@ def SegmentBone(Image, Plot=False):
     Bone = Filter1 & Filter2 & Filter3
 
     if Plot:
-        Shape = np.array(Image.shape) / max(Image.shape) * 10
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Image)
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
-
-        Figure, Axis = plt.subplots(1, 1, figsize=(Shape[1], Shape[0]))
-        Axis.imshow(Bone, cmap='binary')
-        Axis.axis('off')
-        plt.subplots_adjust(0, 0, 1, 1)
-        plt.show()
+        PlotImage(~Bone)
 
     # Erode and dilate to remove small bone parts
-    Disk = morphology.disk(2)
-    Dilated = morphology.binary_dilation(Bone, Disk)
-    Bone = morphology.binary_erosion(Dilated, Disk)
+    if Bone.shape[1] > 2500:
+        Disk = morphology.disk(2)
+        Dilated = morphology.binary_dilation(Bone, Disk)
+        Bone = morphology.binary_erosion(Dilated, Disk)
+    else:
+        Bone = morphology.remove_small_objects(~Bone, 15)
+        Bone = ~morphology.binary_closing(Bone, morphology.disk(25))
 
-    # Print elapsed time
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+    if Plot:
+        PlotImage(Bone)
 
     return Bone
 
@@ -214,6 +202,7 @@ def ExtractROIs(Array, N, Plot=False):
 
     # Perform semi-random ROI selection
     ROIs = np.zeros((N,ROISize,ROISize,3)).astype('int')
+    Bones = np.zeros((N,ROISize,ROISize)).astype('int')
     BVTVs = np.zeros((N))
     Xs = np.zeros((N,2)).astype('int')
     Ys = np.zeros((N,2)).astype('int')
@@ -257,6 +246,7 @@ def ExtractROIs(Array, N, Plot=False):
         # Store ROI and remove coordinates to no select the same
         if ROI:
             ROIs[i] += Array[Y1:Y2, X1:X2]
+            Bones[i] += SegmentBone(ROIs[i])
             BVTVs[i] = BVTV
             XRemove = (FilteredX > X1) & (FilteredX < X2)
             YRemove = (FilteredY > Y1) & (FilteredY < Y2)
@@ -282,7 +272,7 @@ def ExtractROIs(Array, N, Plot=False):
     PrintTime(Tic,Toc)
 
 
-    return ROIs.astype('uint8'), BVTVs
+    return ROIs.astype('uint8'), BVTVs, Bones.astype('bool')
 
 def PlotOverlay(ROI,Seg, FileName=None):
 
@@ -431,12 +421,235 @@ def LMEFIT(DataFrame, Plot=True):
 
     return DataFrame, FitResults
 
+#%%
+class PCNNClass:
+
+    def __init__(self):
+        self.NSegments = 10
+        self.Verbose = 1
+
+    def PrintTime(Tic, Toc):
+        """
+        Print elapsed time in seconds to time in HH:MM:SS format
+        :param Tic: Actual time at the beginning of the process
+        :param Toc: Actual time at the end of the process
+        """
+
+        Delta = Toc - Tic
+
+        Hours = np.floor(Delta / 60 / 60)
+        Minutes = np.floor(Delta / 60) - 60 * Hours
+        Seconds = Delta - 60 * Minutes - 60 * 60 * Hours
+
+        print('Process executed in %02i:%02i:%02i (HH:MM:SS)' % (Hours, Minutes, Seconds))
+
+    def GaussianKernel(self, Length=5, Sigma=1.):
+        """
+        Creates gaussian kernel with side length `Length` and a sigma of `Sigma`
+        """
+        Array = np.linspace(-(Length - 1) / 2., (Length - 1) / 2., Length)
+        Gauss = np.exp(-0.5 * np.square(Array) / np.square(Sigma))
+        Kernel = np.outer(Gauss, Gauss)
+        return Kernel / sum(sum(Kernel))
+
+    def GetNeighbours(self, Array, N=1, Map=False):
+
+        """
+        Function used to get values of the neighbourhood pixels
+        :param Array: Row x Column numpy array
+        :param N: Number of neighbours offset
+        :param Map: return rows and columns indices of neigbours (bool)
+        :return: Neighbourhood pixels values, Map
+        """
+
+        L = 2*N+1
+        S = Array.shape
+        iRows, iCols = np.arange(S[0]), np.arange(S[1])
+        Cols, Rows = np.meshgrid(iRows,iCols)
+        Cols = np.repeat(Cols, L).reshape((S[0], S[0], L))
+        Cols = np.repeat(Cols, L).reshape((S[0], S[0], L, L))
+        Rows = np.repeat(Rows, L).reshape((S[0], S[0], L))
+        Rows = np.repeat(Rows, L).reshape((S[0], S[0], L, L))
+
+        Range = np.arange(L) - N
+        ColRange = np.repeat(Range,L).reshape((L,L))
+        RowRange = np.tile(Range,L).reshape((L,L))
+        iCols = Cols + ColRange
+        iRows = Rows + RowRange
+
+        Pad = np.pad(Array,N)
+        Neighbours = Pad[iRows+N,iCols+N]
+
+        if Map:
+            return Neighbours, [iRows, iCols]
+
+        else:
+            return Neighbours
+
+    def NormalizeValues(self, Image):
+        """
+        Normalize image values, used in PCNN for easier parameters handling
+        :param Image: Original grayscale image
+        :return: N_Image: Image with 0,1 normalized values
+        """
+
+        N_Image = (Image - Image.min()) / (Image.max() - Image.min())
+
+        return N_Image
+
+    def Enhance(self, Image, SRange = (0.01, 1.0)):
+
+        """
+        Enhance image using PCNN, single neuron firing and fast linking implementation
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+        :param Delta: Linear decay factor for threshold level
+        :param VT: Dynamic threshold amplitude
+        :param Nl_max: Max number of iteration for fast linking
+        :return: H: Image histogram in numpy array
+        """
+
+
+        def FLM(Input):
+            S = (Input - Input.min()) / (Input.max() - Input.min()) + 1 / 255
+            W = np.array([[0.7, 1, 0.7], [1, 0, 1], [0.7, 1, 0.7]])
+            Y = np.zeros(S.shape)
+            U = np.zeros(S.shape)
+            T = np.zeros(S.shape)
+            SumY = 0
+            N = 0
+
+            Laplacian = np.array([[1 / 6, 2 / 3, 1 / 6], [2 / 3, -10 / 3, 2 / 3], [1 / 6, 2 / 3, 1 / 6]])
+            Theta = 1 + np.sum(self.GetNeighbours(S) * Laplacian, axis=(3,2))
+            f = 0.75 * np.exp(-S**2 / 0.16) + 0.05
+            L = 3
+            G = self.GaussianKernel(2*L+1, 1)
+            f = np.sum(self.GetNeighbours(f,L) * G, axis=(3,2))
+
+            h = 2E10
+            d = 2
+            g = 0.9811
+            Alpha = 0.01
+            Beta = 0.03
+
+            while SumY < S.size:
+                N += 1
+
+                K = np.sum(self.GetNeighbours(Y) * W, axis=(3, 2))
+                Wave = Alpha * K + Beta * S * (K - d)
+                U = f * U + S + Wave
+                Theta = g * Theta + h * Y
+                Y = (U > Theta) * 1
+                T += N * Y
+                SumY += sum(sum(Y))
+
+            T_inv = T.max() + 1 - T
+            Time = self.NormalizeValues(T_inv)
+
+            return Time
+
+        Tic = time.time()
+        print('\nEnhance image using PCNN')
+        if len(Image.shape) == 2:
+            Output = FLM(Image)
+
+        else:
+            Output = np.zeros(Image.shape)
+            for i in range(Image.shape[-1]):
+                Output[:,:,i] = FLM(Image[:,:,i])
+
+        Hist, Bins = np.histogram(Output, bins=1000, density=True)
+        Low = np.cumsum(Hist) / np.cumsum(Hist).max() > SRange[0]
+        High = np.cumsum(Hist) / np.cumsum(Hist).max() < SRange[1]
+        Values = Bins[1:][Low & High]
+        Output = exposure.rescale_intensity(Output, in_range=(Values[0], Values[-1]))
+
+        Toc = time.time()
+        PrintTime(Tic, Toc)
+
+        return Output
+
+    def Segment(self,Image, Beta=2, Delta=1 / 255, VT=100):
+
+        """
+        Segment image using simplified PCNN, single neuron firing and fast linking implementation
+        Based on:
+        Zhan, K., Shi, J., Wang, H. et al.
+        Computational Mechanisms of Pulse-Coupled Neural Networks: A Comprehensive Review.
+        Arch Computat Methods Eng 24, 573–588 (2017).
+        https://doi.org/10.1007/s11831-016-9182-3
+
+        :param Beta: Linking strength parameter used for internal neuron activity U = F * (1 + Beta * L)
+        :param Delta: Linear decay factor for threshold level
+        :param VT: Dynamic threshold amplitude
+        :param Nl_max: Max number of iteration for fast linking
+        :return: H: Image histogram in numpy array
+        """
+
+        if self.Verbose == 2:
+            Tic = time.time()
+            print('\nImage segmentation...')
+
+        if Image.shape[-1] == 3:
+            Input = color.rgb2gray(Image)
+        else:
+            Input = Image
+
+        # Initialize parameters
+        S = self.NormalizeValues(Input)
+        Rows, Columns = S.shape
+        Y = np.zeros((Rows, Columns))
+        T = np.zeros((Rows, Columns))
+        W = np.array([[0.5, 1, 0.5], [1, 0, 1], [0.5, 1, 0.5]])
+        Theta = np.ones((Rows, Columns))
+
+        FiredNumber = 0
+        N = 0
+
+        # Perform segmentation
+        while FiredNumber < S.size:
+            N += 1
+            F = S
+            L = np.sum(self.GetNeighbours(Y) * W, axis=(3,2))
+            Theta = Theta - Delta + VT * Y
+            U = F * (1 + Beta * L)
+            Y = (U > Theta) * 1
+
+            T = T + N * Y
+            FiredNumber = FiredNumber + sum(sum(Y))
+
+        Output = 1 - self.NormalizeValues(T)
+
+        if Image.shape[-1] == 3:
+            Segments = np.zeros(Image.shape)
+            for Value in np.unique(Output):
+                Binary = Output == Value
+                Color = np.mean(Image[Binary], axis=0)
+                Segments[Binary] = Color
+            Output = Segments
+
+        if Image.dtype == 'uint8':
+            Output = np.round(Output).astype('uint8')
+
+        # Print time elapsed
+        if self.Verbose == 2:
+            Toc = time.time()
+            PrintTime(Tic, Toc)
+
+        return Output
+PCNN = PCNNClass()
+#%%
 # For testing purpose
 class ArgumentsClass:
 
     def __init__(self):
-        self.Data = str(Path.cwd() / 'Scripts' / 'Pipeline' / 'Data')
-        self.Path = str(Path.cwd() / 'Scripts' / 'Pipeline')
+        self.Data = str(Path.cwd() / 'Data')
+        self.Path = str(Path.cwd())
         self.N = 5
         self.Pixel_S = 1.0460251046025104
         self.ROI_S = 500
@@ -446,26 +659,87 @@ class ArgumentsClass:
         self.Margin = 100
 Arguments = ArgumentsClass()
 
+#%%
 def Main(Arguments):
 
-    # List pictures
-    DataDirectory = Arguments.Data
-    Pictures = [P for P in os.listdir(DataDirectory)]
-    Pictures.sort()
 
-    # Build data frame
-    Data = pd.DataFrame()
-    for Index, Name in enumerate(Pictures):
-        Data.loc[Index, 'DonorID'] = Name[:3]
-        Data.loc[Index, 'Side'] = Name[3]
-        Data.loc[Index, 'Site'] = Name[4]
-    Donors = Data['DonorID'].unique()
-    Sides = Data['Side'].unique()
-    Sites = Data['Site'].unique()
-    ROIs = np.arange(Arguments.N) + 1
-    Indices = pd.MultiIndex.from_product([Donors, Sides, Sites, ROIs], names=['Donor ID', 'Side', 'Site', 'ROI Number'])
-    Data = pd.DataFrame(index=Indices, columns=['BV/TV', 'CLd', 'On', 'HCn', 'HCd', 'HCa'])
+#%%
+# List pictures
+DataDirectory = Arguments.Data
+Pictures = [P for P in os.listdir(DataDirectory)]
+Pictures.sort()
 
+# Build data frame
+Data = pd.DataFrame()
+for Index, Name in enumerate(Pictures):
+    Data.loc[Index, 'DonorID'] = Name[:3]
+    Data.loc[Index, 'Side'] = Name[3]
+    Data.loc[Index, 'Site'] = Name[4]
+Donors = Data['DonorID'].unique()
+Sides = Data['Side'].unique()
+Sites = Data['Site'].unique()
+ROIs = np.arange(Arguments.N) + 1
+Indices = pd.MultiIndex.from_product([Donors, Sides, Sites, ROIs], names=['Donor ID', 'Side', 'Site', 'ROI Number'])
+Data = pd.DataFrame(index=Indices, columns=['BV/TV', 'CLd', 'On', 'HCn', 'HCd', 'HCa'])
+
+#%%
+# Extract ROIs
+ROIsData = []
+BonesData = []
+BVTVData = []
+for Index, Name in enumerate(Pictures):
+    Array = io.imread(str(Path(DataDirectory, Name)))
+    ROIs, BVTVs, Bones = ExtractROIs(Array, Arguments.N, Plot=False)
+    ROIsData.append(ROIs)
+    BonesData.append(Bones)
+    BVTVData.append(BVTVs)
+ROIsData = np.array(ROIsData)
+BonesData = np.array(BonesData)
+BVTVData = np.array(BVTVData)
+    
+#%%
+
+# Extract features
+
+Smin = 0.5
+Smax = 8
+Snum = 3
+
+print('\nExtract manual segmentation features')
+SamplesFeatures = []
+for iS, SampleROIs in enumerate(ROIsData):
+    Tic = time.time()
+    Features, FNames = ExtractFeatures(SampleROIs, ['RGB'], ['I', 'E', 'H1', 'H2'], [Smin, Smax], nSigma=Snum)
+
+    # Add distance variable
+    Distances = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+    for iROI, ROI in enumerate(BonesData[iS]):
+        Distance = morphology.medial_axis(ROI, return_distance=True)[1]
+        for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+            fDistance = filters.gaussian(Distance,sigma=Sigma)
+            Distances[iROI,:,:,iSigma] = fDistance
+            if iROI == 0:
+                FNames.Names.append('Distance ' + str(Sigma))
+
+    Features = np.concatenate([Features, Distances], axis=-1)
+
+    # Add PCNN segmentation variable
+    Seg = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+    for iROI, ROI in enumerate(SampleROIs):
+        for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+            Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=1/10))
+            if iROI == 0:
+                FNames.Names.append('PCNN ' + str(Sigma))
+
+    Features = np.concatenate([Features, Seg], axis=-1)
+
+    SamplesFeatures.append(Features)
+
+    Toc = time.time()
+    PrintTime(Tic, Toc)
+
+
+#%%
     # Perform segmentation
     Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
     for Index, Name in enumerate(Pictures):
@@ -476,6 +750,36 @@ def Main(Arguments):
 
             if ROI.sum() > 0:
                 Features = ExtractFeatures(ROI)[0]
+
+
+                print('\nExtract manual segmentation features')
+                Tic = time.time()
+                Features, FNames = ExtractFeatures(Data, ['RGB'], ['I', 'E', 'H1', 'H2'], [Smin, Smax], nSigma=Snum)
+
+                # Add distance variable
+                Distances = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+                for iROI, ROI in enumerate(Bones):
+                    Distance = morphology.medial_axis(ROI, return_distance=True)[1]
+                    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+                        fDistance = filters.gaussian(Distance,sigma=Sigma)
+                        Distances[iROI,:,:,iSigma] = fDistance
+                        if iROI == 0:
+                            FNames.Names.append('Distance ' + str(Sigma))
+
+                Features = np.concatenate([Features, Distances], axis=-1)
+
+                # Add PCNN segmentation variable
+                Seg = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
+                for iROI, ROI in enumerate(Data):
+                    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+                        Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=1/10))
+                        if iROI == 0:
+                            FNames.Names.append('PCNN ' + str(Sigma))
+
+                Features = np.concatenate([Features, Seg], axis=-1)
+
+                Toc = time.time()
+                PrintTime(Tic, Toc)
                 S_ROI = future.predict_segmenter(Features, Classifier)
 
                 # Crop margin
