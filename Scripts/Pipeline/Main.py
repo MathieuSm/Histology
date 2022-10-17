@@ -274,7 +274,7 @@ def ExtractROIs(Array, N, Plot=False):
 
     return ROIs.astype('uint8'), BVTVs, Bones.astype('bool')
 
-def PlotOverlay(ROI,Seg, FileName=None):
+def PlotOverlay(ROI,Seg, FileName=None, ShowPlot=True):
 
     H, W = Seg.shape
     SegImage = np.zeros((H, W, 4))
@@ -284,14 +284,6 @@ def PlotOverlay(ROI,Seg, FileName=None):
         Filter = Seg == Value
         SegImage[Filter] = Colors[iValue]
 
-    Figure, Axis = plt.subplots(1,1, figsize=(H/100,W/100))
-    Axis.imshow(ROI)
-    Axis.axis('off')
-    plt.subplots_adjust(0,0,1,1)
-    if FileName:
-        plt.savefig(FileName)
-    plt.show()
-
     Figure, Axis = plt.subplots(1, 1, figsize=(H / 100, W / 100))
     Axis.imshow(ROI)
     Axis.imshow(SegImage, interpolation='none')
@@ -299,9 +291,12 @@ def PlotOverlay(ROI,Seg, FileName=None):
     plt.subplots_adjust(0, 0, 1, 1)
     if FileName:
         plt.savefig(FileName[:-4] + '_Seg.png')
-    plt.show()
+    if ShowPlot:
+        plt.show()
+    else:
+        plt.close(Figure)
 
-def PlotImage(Array):
+def PlotImage(Array, FileName=None, ShowPlot=True):
 
     Figure, Axis = plt.subplots(1,1,figsize=(10,10))
     if Array.shape[-1] == 3:
@@ -310,7 +305,13 @@ def PlotImage(Array):
         Axis.imshow(Array, cmap='binary_r')
     Axis.axis('off')
     plt.subplots_adjust(0,0,1,1)
-    plt.show()
+    
+    if FileName:
+        plt.savefig(FileName)
+    if ShowPlot:
+        plt.show()
+    else:
+        plt.close(Figure)
 
 def PlotData(Data, Donors, Sides):
 
@@ -714,163 +715,99 @@ for iS, SampleROIs in enumerate(ROIsData):
     # Add distance variable
     Distances = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
     for iROI, ROI in enumerate(BonesData[iS]):
-        Distance = morphology.medial_axis(ROI, return_distance=True)[1]
-        for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
-            fDistance = filters.gaussian(Distance,sigma=Sigma)
-            Distances[iROI,:,:,iSigma] = fDistance
-            if iROI == 0:
-                FNames.Names.append('Distance ' + str(Sigma))
+        if ROI.sum() > 0:
+            Distance = morphology.medial_axis(ROI, return_distance=True)[1]
+            for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+                fDistance = filters.gaussian(Distance,sigma=Sigma)
+                Distances[iROI,:,:,iSigma] = fDistance
+                if iROI == 0:
+                    FNames.Names.append('Distance ' + str(Sigma))
 
     Features = np.concatenate([Features, Distances], axis=-1)
 
     # Add PCNN segmentation variable
     Seg = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
     for iROI, ROI in enumerate(SampleROIs):
-        for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
-            Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=1/10))
-            if iROI == 0:
-                FNames.Names.append('PCNN ' + str(Sigma))
+        if ROI.sum() > 0:
+            for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
+                Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=1/10))
+                if iROI == 0:
+                    FNames.Names.append('PCNN ' + str(Sigma))
 
     Features = np.concatenate([Features, Seg], axis=-1)
 
     SamplesFeatures.append(Features)
 
-    Toc = time.time()
-    PrintTime(Tic, Toc)
+SamplesFeatures = np.array(SamplesFeatures)
+
+Toc = time.time()
+PrintTime(Tic, Toc)
 
 
 #%%
-    # Perform segmentation
-    Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
-    for Index, Name in enumerate(Pictures):
-        Array = io.imread(str(Path(DataDirectory, Name)))
-        ROIs, BVTVs = ExtractROIs(Array, Arguments.N, Plot=False)
+# Perform segmentation
+Classifier = joblib.load(str(Path(Arguments.Path, 'RFC.joblib')))
+for iS, Sample in enumerate(SamplesFeatures):
+    for iROI, ROI in enumerate(Sample):
+        Name = Pictures[iS]
+        print('\nSegment ROI n°' + str(iROI+1) + ' of sample ' + Name[:-4])
+        Features = np.reshape(ROI,(ROI.shape[0]*ROI.shape[1],ROI.shape[2]))
+        Seg = Classifier.predict(Features)
+        Seg = np.reshape(Seg, BonesData[iS,iROI].shape)
+        Seg[~BonesData[iS,iROI]] = 4
 
-        for iROI, ROI in enumerate(ROIs):
+        # Crop margin
+        M = int(Arguments.Margin / 2)
+        ROI = ROIsData[iS,iROI]
+        ROI = ROI[M:-M, M:-M]
+        Results = Seg[M:-M, M:-M]
 
-            if ROI.sum() > 0:
-                Features = ExtractFeatures(ROI)[0]
+        # File for saving image
+        FilePath = Path(Arguments.Path, 'SegmentationResults')
+        FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI + 1) + '.png'))
+        PlotImage(ROI,FileName, ShowPlot=False)
+        PlotOverlay(ROI, Results, FileName, ShowPlot=False)
 
+        # Compute different variables
+        On = np.max(measure.label(Results == 3))
+        HCl = measure.label(Results == 4)
+        Properties = ['equivalent_diameter', 'major_axis_length', 'minor_axis_length']
+        HCp = pd.DataFrame(measure.regionprops_table(HCl, properties=Properties))
+        # HCp = HCp[HCp['equivalent_diameter'] > 30]
+        HCn = len(HCp)
 
-                print('\nExtract manual segmentation features')
-                Tic = time.time()
-                Features, FNames = ExtractFeatures(Data, ['RGB'], ['I', 'E', 'H1', 'H2'], [Smin, Smax], nSigma=Snum)
-
-                # Add distance variable
-                Distances = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
-                for iROI, ROI in enumerate(Bones):
-                    Distance = morphology.medial_axis(ROI, return_distance=True)[1]
-                    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
-                        fDistance = filters.gaussian(Distance,sigma=Sigma)
-                        Distances[iROI,:,:,iSigma] = fDistance
-                        if iROI == 0:
-                            FNames.Names.append('Distance ' + str(Sigma))
-
-                Features = np.concatenate([Features, Distances], axis=-1)
-
-                # Add PCNN segmentation variable
-                Seg = np.zeros((Features.shape[0], Features.shape[1], Features.shape[2], Snum))
-                for iROI, ROI in enumerate(Data):
-                    for iSigma, Sigma in enumerate(np.linspace(Smin,Smax,Snum)):
-                        Seg[iROI, :, :, iSigma] = color.rgb2gray(PCNN.Segment(ROI,Delta=1/10))
-                        if iROI == 0:
-                            FNames.Names.append('PCNN ' + str(Sigma))
-
-                Features = np.concatenate([Features, Seg], axis=-1)
-
-                Toc = time.time()
-                PrintTime(Tic, Toc)
-                S_ROI = future.predict_segmenter(Features, Classifier)
-
-                # Crop margin
-                M = int(Arguments.Margin / 2)
-                ROI = ROI[M:-M, M:-M]
-
-                # File for saving image
-                FilePath = Path(Arguments.Path, 'SegmentationResults')
-                FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI + 1) + '.png'))
-
-                if Arguments.Clean:
-
-                    PlotOverlay(ROI, S_ROI[M:-M, M:-M])
-
-                    # Clean segmentation
-                    HCl = measure.label(S_ROI == 4)
-                    HCp = pd.DataFrame(measure.regionprops_table(HCl, properties=['equivalent_diameter']))
-                    HCp = HCp[HCp['equivalent_diameter'] > 30]
-                    HC = np.zeros(S_ROI.shape,'bool')
-                    for i in HCp.index:
-                        HC += morphology.binary_closing(HCl == i+1, morphology.disk(25))
-                    # PlotImage(HC)
-
-                    # # Clean segmentation
-                    # HC = S_ROI == 2
-                    # HC = morphology.binary_dilation(HC,morphology.disk(5))
-                    # HC = morphology.remove_small_objects(HC, 500)
-                    # HC = ~morphology.remove_small_objects(~HC, 600)
-                    # HC = morphology.binary_closing(~HC,morphology.disk(25))
-                    # # PlotImage(HC)
-
-                    CL = S_ROI == 1
-                    CL = morphology.binary_dilation(CL, morphology.disk(3))
-                    CL = morphology.remove_small_objects(CL,1000)
-                    CL = morphology.binary_erosion(CL,morphology.disk(3))
-                    # PlotImage(~CL)
-
-                    OC = S_ROI == 3
-                    OC = morphology.binary_erosion(OC, morphology.disk(2))
-                    OC = morphology.binary_dilation(OC, morphology.disk(2))
-                    OC = morphology.remove_small_objects(OC, 25)
-                    # PlotImage(OC)
-
-                    Results = np.ones(S_ROI.shape) * 2
-                    Results[OC] = 3
-                    Results[CL] = 1
-                    Results[HC] = 4
-                    Results = Results[M:-M,M:-M]
-
-                    # Save segmentation results
-                    PlotOverlay(ROI,Results,FileName)
-
-                else:
-
-                    Results = S_ROI[M:-M, M:-M]
-                    PlotOverlay(ROI, Results, FileName)
-
-                # Compute different variables
-                On = np.max(measure.label(Results == 3))
-                HCl = measure.label(Results == 4)
-                Properties = ['equivalent_diameter', 'major_axis_length', 'minor_axis_length']
-                HCp = pd.DataFrame(measure.regionprops_table(HCl, properties=Properties))
-                HCp = HCp[HCp['equivalent_diameter'] > 30]
-                HCn = len(HCp)
-                HCp['Anisotropy'] = HCp['major_axis_length'] / HCp['minor_axis_length']
+        HCp['Anisotropy'] = HCp['major_axis_length'] / HCp['minor_axis_length']
 
 
-                # Store results in data frame
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['BV/TV'] = BVTVs[iROI]
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['CLd'] = np.sum(Results == 1) / ROI.size
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['On'] = On
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCn'] = HCn
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCd'] = HCp['equivalent_diameter'].mean()
-                Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCa'] = HCp['Anisotropy'].mean()
-    Data = Data.dropna().astype('float')
+        # Store results in data frame
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['BV/TV'] = BVTVData[iS,iROI]
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['CLd'] = np.sum(Results == 1) / ROI.size
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['On'] = On
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCn'] = HCn
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCd'] = HCp['equivalent_diameter'].mean()
+        Data.loc[Name[:3], Name[3], Name[4], iROI+1]['HCa'] = HCp['Anisotropy'].mean()
+
+#%%
+
+# Clean data frame
+Data = Data.dropna().astype('float')
+Data = Data[Data['BV/TV'] > 0.88]
 
 
-    # Plot data
-    PlotData(Data, Donors, Sides)
+# Plot data
+PlotData(Data, Donors, Sides)
 
-    # Perform statistical analysis
-    Data2Fit = Data.reset_index()
+# Perform statistical analysis
+Data2Fit = Data.reset_index()
 
-    Model = smf.mixedlm('CLd ~ Site',
-                      # vc_formula={'Side': '0 + Side'},
-                      re_formula='1',
-                      data=Data2Fit,
-                      groups=Data2Fit['Donor ID'])
-    Free = MixedLMParams.from_components(fe_params=np.ones(2),cov_re=np.eye(1))
-    LME = Model.fit(reml=True,free=Free)
-    print(LME.summary())
+Model = smf.mixedlm('CLd ~ Site',
+                    # vc_formula={'Side': '0 + Side'},
+                    re_formula='1',
+                    data=Data2Fit,
+                    groups=Data2Fit['Donor ID'])
+Free = MixedLMParams.from_components(fe_params=np.ones(2),cov_re=np.eye(1))
+LME = Model.fit(reml=True,free=Free)
+print(LME.summary())
 
 if __name__ == '__main__':
     # Initiate the parser with a description
@@ -892,3 +829,5 @@ if __name__ == '__main__':
 
     Main(Arguments)
 
+
+# %%

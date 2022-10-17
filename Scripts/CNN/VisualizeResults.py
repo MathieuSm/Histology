@@ -1,3 +1,4 @@
+#%%
 import os
 import time
 import numpy as np
@@ -119,16 +120,18 @@ def PlotImage(Array):
     plt.subplots_adjust(0,0,1,1)
     plt.show()
 
+#%%
 
 # Define paths
-ModelPath = Path.cwd() / 'Scripts' / 'CNN'
-DataPath = Path.cwd() / 'Scripts' / 'Pipeline'
+ModelPath = Path.cwd() / '..' / 'CNN'
+DataPath = Path.cwd()
 
 # List manually segmented pictures
 DataDirectory = str(DataPath / 'ManualSegmentation')
 Pictures = [P for P in os.listdir(DataDirectory) if P.endswith('Seg.png')]
 Pictures.sort()
 
+#%%
 # Load manual segmentations
 PicturesData = {}
 for iPicture, Picture in enumerate(Pictures[1:]):
@@ -136,6 +139,8 @@ for iPicture, Picture in enumerate(Pictures[1:]):
     PicturesData[Picture[:-8]]['ROI'] = io.imread(str(Path(DataDirectory, Picture[:-8] + '.png')))
     Seg = io.imread(str(Path(DataDirectory, Picture)))
     PicturesData[Picture[:-8]]['Labels'] = ExtractLabels(Seg)[0]
+
+#%%
 
 # Perform data augmentation
 Images = []
@@ -154,6 +159,8 @@ Images = np.array(Images)
 Labels = np.array(Labels).astype('int')
 Labels = np.expand_dims(Labels, -1)
 
+#%%
+
 # Load UNet model and perform predictions
 UNet = load_model(str(ModelPath / 'UNet'))
 
@@ -163,23 +170,27 @@ Predictions = UNet.predict(Images)
 Toc = time.time()
 PrintTime(Tic,Toc)
 
+#%%
+
 # Visualize results
 Random = np.random.randint(0, len(Images)-1)
 RandomImage = Images[Random]
 RandomLabel = Labels[Random]
 Prediction = Predictions[Random]
 
-Figure, Axis = plt.subplots(1,3)
-Axis[0].imshow(RandomImage)
-Axis[1].imshow(RandomLabel == 1, cmap='binary_r')
-Axis[2].imshow(Prediction[:,:,1], cmap='binary_r')
-for i in range(3):
-    Axis[i].axis('off')
-plt.tight_layout()
-plt.show()
+# Figure, Axis = plt.subplots(1,3)
+# Axis[0].imshow(RandomImage)
+# Axis[1].imshow(RandomLabel == 1, cmap='binary_r')
+# Axis[2].imshow(Prediction[:,:,1], cmap='binary_r')
+# for i in range(3):
+#     Axis[i].axis('off')
+# plt.tight_layout()
+# plt.show()
 
+PlotImage(RandomImage)
+PlotImage(Prediction[:,:,0])
+PlotImage(Prediction[:,:,1])
+PlotImage(Prediction[:,:,2])
 PlotImage(Prediction[:,:,3] > 0.5)
-
-Figure, Axis = plt.subplots(1,1)
-Axis.plot(np.unique(Prediction[:,:,2]), color=(1,0,0))
-plt.show()
+# %%
+# %%
