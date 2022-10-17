@@ -1,14 +1,15 @@
 #%%
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
 from skimage import io
 from pathlib import Path
 from patchify import patchify
 from matplotlib import pyplot as plt
-from keras import layers, utils, Model
+from tensorflow.keras import layers, utils, Model
 from sklearn.model_selection import train_test_split
-from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
 # https://youtu.be/-XeKG_T6tdc
@@ -19,13 +20,16 @@ from keras.preprocessing.image import ImageDataGenerator
 
 def ConvulationBlock(Input, nFilters, DropRate):
 
-    Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Input)
-    Layer = layers.Activation("relu")(Layer)
+    Activation = 'relu'
 
-    Layer = layers.Dropout(DropRate)(Layer)
+    Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Input)
+    Layer = layers.Activation(Activation)(Layer)
+
+    if DropRate:
+        Layer = layers.Dropout(DropRate)(Layer)
 
     Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Layer)
-    Layer = layers.Activation("relu")(Layer)
+    Layer = layers.Activation(Activation)(Layer)
 
     return Layer
 def EncoderBlock(Input, nFilters, DropRate):
@@ -122,7 +126,7 @@ for Key in PicturesData.keys():
     Picture = PicturesData[Key]['ROI']
     Label = PicturesData[Key]['Seg']
 
-    PadWidth = 256 - np.mod(Picture.shape[0],PatchSize)
+    PadWidth = PatchSize - np.mod(Picture.shape[0],PatchSize)
     Pad1, Pad2 = int(np.ceil(PadWidth/2)), int(np.floor(PadWidth/2))
 
     Padded = np.pad(Picture,((Pad1,Pad2),(Pad1,Pad2),(0,0)),mode='reflect')
@@ -132,7 +136,7 @@ for Key in PicturesData.keys():
     PatchedL = patchify(Padded, (PatchSize, PatchSize), step=PatchSize)
     for i in range(PatchedP.shape[0]):
         for j in range(PatchedP.shape[1]):
-                Data.append(PatchedP[i,j,0] / 255)
+                Data.append(PatchedP[i,j,0])
                 Labels.append(PatchedL[i,j])
 Data = np.array(Data)
 Labels = np.array(Labels)
@@ -165,30 +169,41 @@ plt.show()
 # Define data augmentation
 Seed=24
 
-DataArgs = {'rotation_range':90,
-            'width_shift_range':0.3,
-            'height_shift_range':0.3,
-            'horizontal_flip':True,
-            'vertical_flip':True,
-            'fill_mode':'reflect'}
-
-LabelsArgs = {'rotation_range':90,
+DataArgs = {'rescale':1/255,
+            'rotation_range':90,
             'width_shift_range':0.3,
             'height_shift_range':0.3,
             'horizontal_flip':True,
             'vertical_flip':True,
             'fill_mode':'reflect',
-            'preprocessing_function':lambda x: np.round(x).astype('int')} 
+            'featurewise_center':False,
+            'samplewise_center':False,
+            'featurewise_std_normalization':False,
+            'samplewise_std_normalization':False}
 
-DataGenerator = ImageDataGenerator(DataArgs)
-DataGenerator.fit(TrainX, augment=True, seed=Seed)
+LabelsArgs = {'rotation_range':90,
+              'width_shift_range':0.3,
+              'height_shift_range':0.3,
+              'horizontal_flip':True,
+              'vertical_flip':True,
+              'fill_mode':'reflect',
+              'preprocessing_function':lambda x: np.round(x).astype('int'),
+              'featurewise_center':False,
+              'samplewise_center':False,
+              'featurewise_std_normalization':False,
+              'samplewise_std_normalization':False} 
+
+DataGenerator = ImageDataGenerator(**DataArgs)
+LabelsGenerator = ImageDataGenerator(**LabelsArgs)
+
+# DataGenerator.fit(TrainX, augment=True, seed=Seed)
+# LabelsGenerator.fit(TrainY, augment=True, seed=Seed)
+
 TrainDataGenerator = DataGenerator.flow(TrainX, seed=Seed)
 TestDataGenerator = DataGenerator.flow(TestX, seed=Seed)
 
-LabelsGenerator = ImageDataGenerator(LabelsArgs)
-LabelsGenerator.fit(TrainY, augment=True, seed=Seed)
-TrainLabelsGenerator = LabelsGenerator.flow(TrainY, seed=Seed)
-TestLabelsGenerator = LabelsGenerator.flow(TrainY, seed=Seed)
+TrainLabelsGenerator = LabelsGenerator.flow(TrainYCat, seed=Seed)
+TestLabelsGenerator = LabelsGenerator.flow(TestYCat, seed=Seed)
 
 def MyGenerator(DataGenerator, LabelsGenerator):
     Generators = zip(DataGenerator, LabelsGenerator)
@@ -202,15 +217,15 @@ TestGenerator = MyGenerator(TestDataGenerator, TestLabelsGenerator)
 # Check augmented data
 D = TrainDataGenerator.next()
 L = TrainLabelsGenerator.next()
-for i in range(0,1):
-    Image = (D[i] - D[i].min()) / (D[i].max() - D[i].min())
-    Label = L[i]
-    Figure, Axis = plt.subplots(1,2)
-    Axis[0].imshow((Image*255).astype('uint8'))
-    Axis[0].axis('Off')
-    Axis[1].imshow(Label)
-    Axis[1].axis('Off')
-    plt.show()
+Label = np.zeros((PatchSize, PatchSize))
+for i in range(1,L.shape[-1]):
+    Label += i*L[0,:,:,i]
+Figure, Axis = plt.subplots(1,2)
+Axis[0].imshow(np.round(D[0]*255).astype('uint8'))
+Axis[0].axis('Off')
+Axis[1].imshow(Label)
+Axis[1].axis('Off')
+plt.show()
 
 
 #%%
@@ -218,40 +233,34 @@ for i in range(0,1):
 BatchSize = 16
 StepsPerEpoch = 3*(len(TrainX))//BatchSize
 History = UNet.fit(TrainGenerator, validation_data=TestGenerator, steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch, epochs=50)
+# History = UNet.fit(TrainGenerator, validation_data=TestGenerator, epochs=50)
 UNet.save('Unet.hdf5')
 PlotHistory(History)
 
-
 #%%
-#IOU
-y_pred=model.predict(X_test)
-y_pred_thresholded = y_pred > 0.5
+# Look at testing image
+Random = np.random.randint(0, len(TestX)-1)
+TestImage = TestX[Random]
+TestLabel = TestY[Random]
+Prediction = UNet.predict(np.expand_dims(TestImage,0))
 
-intersection = np.logical_and(y_test, y_pred_thresholded)
-union = np.logical_or(y_test, y_pred_thresholded)
-iou_score = np.sum(intersection) / np.sum(union)
-print("IoU socre is: ", iou_score)
-
-#Predict on a few images
-#model = get_model()
-#model.load_weights('mitochondria_50_plus_100_epochs.hdf5') #Trained for 50 epochs and then additional 100
-
-test_img_number = random.randint(0, len(X_test))
-test_img = X_test[test_img_number]
-ground_truth=y_test[test_img_number]
-test_img_norm=test_img[:,:,0][:,:,None]
-test_img_input=np.expand_dims(test_img_norm, 0)
-prediction = (model.predict(test_img_input)[0,:,:,0] > 0.2).astype(np.uint8)
-
-plt.figure(figsize=(16, 8))
-plt.subplot(231)
-plt.title('Testing Image')
-plt.imshow(test_img[:,:,0], cmap='gray')
-plt.subplot(232)
-plt.title('Testing Label')
-plt.imshow(ground_truth[:,:,0], cmap='gray')
-plt.subplot(233)
-plt.title('Prediction on test image')
-plt.imshow(prediction, cmap='gray')
-
+Figure, Axis = plt.subplots(2,3)
+Axis[0,0].imshow(TestImage)
+Axis[0,0].set_title('Image')
+Axis[0,1].imshow(Prediction[0,:,:,0], cmap='binary_r')
+Axis[0,1].set_title('Interstitial')
+Axis[0,2].imshow(Prediction[0,:,:,1], cmap='binary_r')
+Axis[0,2].set_title('Cement lines')
+Axis[1,0].imshow(TestLabel[:,:,0])
+Axis[1,0].set_title('Labels')
+Axis[1,1].imshow(Prediction[0,:,:,2], cmap='binary_r')
+Axis[1,1].set_title('Osteocytes')
+Axis[1,2].imshow(Prediction[0,:,:,3], cmap='binary_r')
+Axis[1,2].set_title('Harvesian canals')
+for i in range(2):
+    for j in range(3):
+        Axis[i,j].axis('off')
+plt.tight_layout()
 plt.show()
+
+# %%
