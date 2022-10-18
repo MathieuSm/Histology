@@ -7,6 +7,8 @@ from skimage import io
 from pathlib import Path
 from patchify import patchify
 from matplotlib import pyplot as plt
+from sklearn.utils import class_weight
+from tensorflow.keras import backend as K
 from tensorflow.keras import layers, utils, Model
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -63,6 +65,52 @@ def BuildUNet(InputShape, nClasses, nFilters=[12, 32, 64, 128, 256], DropRates=[
     Outputs = layers.Conv2D(nClasses, 1, padding="same", activation=Activation)(D)
     UNet = Model(Input, Outputs, name='U-Net')
     return UNet
+def categorical_focal_loss(alpha, gamma=2.):
+    """
+    Softmax version of focal loss.
+    When there is a skew between different categories/labels in your data set, you can try to apply this function as a
+    loss.
+           m
+      FL = ∑  -alpha * (1 - p_o,c)^gamma * y_o,c * log(p_o,c)
+          c=1
+      where m = number of classes, c = class and o = observation
+    Parameters:
+      alpha -- the same as weighing factor in balanced cross entropy. Alpha is used to specify the weight of different
+      categories/labels, the size of the array needs to be consistent with the number of classes.
+      gamma -- focusing parameter for modulating factor (1-p)
+    Default value:
+      gamma -- 2.0 as mentioned in the paper
+      alpha -- 0.25 as mentioned in the paper
+    References:
+        Official paper: https://arxiv.org/pdf/1708.02002.pdf
+        https://www.tensorflow.org/api_docs/python/tf/keras/backend/categorical_crossentropy
+    Usage:
+     model.compile(loss=[categorical_focal_loss(alpha=[[.25, .25, .25]], gamma=2)], metrics=["accuracy"], optimizer=adam)
+    """
+
+    alpha = np.array(alpha, dtype=np.float32)
+
+    def categorical_focal_loss_fixed(y_true, y_pred):
+        """
+        :param y_true: A tensor of the same shape as `y_pred`
+        :param y_pred: A tensor resulting from a softmax
+        :return: Output tensor.
+        """
+
+        # Clip the prediction value to prevent NaN's and Inf's
+        epsilon = K.epsilon()
+        y_pred = K.clip(y_pred, epsilon, 1. - epsilon)
+
+        # Calculate Cross Entropy
+        cross_entropy = -y_true * K.log(y_pred)
+
+        # Calculate Focal Loss
+        loss = alpha * K.pow(1 - y_pred, gamma) * cross_entropy
+
+        # Compute mean loss in mini_batch
+        return K.mean(K.sum(loss, axis=-1))
+
+    return categorical_focal_loss_fixed
 def PlotHistory(History):
 
     Loss = History.history['loss']
@@ -146,13 +194,17 @@ Labels = np.expand_dims(Labels,-1)
 
 #%%
 # Separate into train and test data and build unet model
-
 TrainX, TestX, TrainY, TestY = train_test_split(Data, Labels, random_state = 0)
 TrainYCat = utils.to_categorical(TrainY)
 TestYCat = utils.to_categorical(TestY)
 
+# Compute class weigths on training data
+CW = class_weight.compute_class_weight('balanced', classes=np.unique(TrainY), y=TrainY.ravel())
+CW = CW / np.sum(CW)
+
+# Build and fit UNet
 UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1]) 
-UNet.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+UNet.compile(optimizer='adam', loss=categorical_focal_loss(alpha=CW), metrics=['accuracy'])
 print(UNet.summary())
 
 #%%
@@ -229,6 +281,7 @@ plt.show()
 
 
 #%%
+
 # Fit model and plot history
 BatchSize = 16
 StepsPerEpoch = 3*(len(TrainX))//BatchSize
