@@ -43,3 +43,8 @@ Tests/Calcein/Nikon/Docs/
 # Ignore big dictionaries
 *.pkl
 *.joblib
+
+# Ignore big files
+*.hdf5
+*.data*
+*.index

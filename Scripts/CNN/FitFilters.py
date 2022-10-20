@@ -171,7 +171,7 @@ def PlotHistory(History):
     Axis.set_xlabel('Epochs')
     Axis.set_ylabel('Loss')
     Axis.legend()
-    # plt.show()
+    plt.show()
 
     Accuracy = History.history['accuracy']
     ValAccuracy = History.history['val_accuracy']
@@ -181,7 +181,7 @@ def PlotHistory(History):
     Axis.set_xlabel('Epochs')
     Axis.set_ylabel('Accuracy')
     Axis.legend()
-    # plt.show()
+    plt.show()
 
     return
 def PlotConfusionMatrix(GroundTruth, Results, Ticks):
