@@ -1,5 +1,6 @@
 #%%
 
+from operator import truediv
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
@@ -9,9 +10,9 @@ from matplotlib import pyplot as plt
 from sklearn.utils import class_weight
 from tensorflow.keras.metrics import MeanIoU
 from skimage import io, transform, morphology
-from tensorflow.keras import layers, utils, Model
 from sklearn.model_selection import train_test_split
 from focal_loss import SparseCategoricalFocalLoss as SFL
+from tensorflow.keras import layers, utils, Model, callbacks
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
@@ -147,15 +148,15 @@ for Key in PicturesData.keys():
                     ImageP = np.round(ImageP).astype('uint8')
                     ImageA = transform.resize(PatchedL[i,j], (256,256), anti_aliasing=False, order=0)
                     ImageL = np.zeros(ImageA.shape)
-                    for v in np.unique(ImageA):
+                    for iv, v in enumerate(np.unique(ImageA)):
                         Bin = ImageA == v
-                        if v == 1:
+                        if iv == 1:
                             Disk = 2
                         else:
                             Disk = 1
                         Bin = morphology.binary_dilation(Bin, morphology.disk(Disk))
                         Bin = morphology.binary_erosion(Bin, morphology.disk(1))
-                        ImageL[Bin] = v
+                        ImageL[Bin] = iv
 
                 else:
                     ImageP = PatchedP[i,j,0]
@@ -258,11 +259,19 @@ UNet.compile(optimizer='adam', loss=[SFL(gamma=2, class_weight=CW)], metrics=['c
 print(UNet.summary())
 
 #%%
+# Set callbacks
+File = Path('Models', 'UNet_{epoch:04d}_{val_categorical_accuracy:.3f}.hdf5')
+CP = callbacks.ModelCheckpoint(str(File), monitor='val_categorical_accuracy', verbose=1, save_best_only=True, mode='max')
+ES = callbacks.EarlyStopping(monitor='val_loss', patience=500, verbose=1, mode='min', restore_best_weights=True)
+Callbacks = [CP,ES]
+#%%
 # Fit Unet and plot history
 
 BatchSize = 24
-StepsPerEpoch = 3*(len(TrainX))//BatchSize
-History = UNet.fit(TrainGenerator, validation_data=TestGenerator, steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch, epochs=600)
+StepsPerEpoch = 12 #3*(len(TrainX))//BatchSize
+History = UNet.fit(TrainGenerator, validation_data=TestGenerator,
+                   steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch,
+                   epochs=2000, callbacks=Callbacks)
 # History = UNet.fit(TrainGenerator, validation_data=TestGenerator, epochs=50)
 UNet.save('Unet.hdf5')
 PlotHistory(History)
@@ -288,5 +297,40 @@ plt.tight_layout()
 plt.show()
 
 
+
+# %%
+def PlotResults(ROI, Labels, Results, FileName=None, ShowPlot=True):
+
+    H, W = Labels.shape
+    SegImage = np.zeros((H, W, 4))
+    PredImage = np.zeros((H, W, 4))
+
+    Colors = [(0,0,1,0.0),(1,0,0,0.5),(0,1,0,0.5),(0,1,1,0.5)]
+    for iValue, Value in enumerate(np.unique(Labels)):
+        Filter = Labels == Value
+        SegImage[Filter] = Colors[iValue]
+
+        Filter = Results == Value
+        PredImage[Filter] = Colors[iValue]
+
+    Figure, Axis = plt.subplots(1,3, figsize=(H/50,3.2*W/50), facecolor=(1,1,1))
+    Axis[0].imshow(ROI)
+    Axis[0].set_title('Image',color=(0,0,0))
+    Axis[1].imshow(ROI)
+    Axis[1].imshow(SegImage, interpolation='none')
+    Axis[1].set_title('Labels')
+    Axis[2].imshow(ROI)
+    Axis[2].imshow(PredImage, interpolation='none')
+    for i in range(3):
+        Axis[i].axis('off')
+    plt.subplots_adjust(0,0,1,1)
+    if FileName:
+        plt.savefig(FileName)
+    if ShowPlot:
+        plt.show()
+    else:
+        plt.close(Figure)
+
+PlotResults(TestImage, TestLabel[:,:,0], PredictionClasses)
 
 # %%
