@@ -7,8 +7,6 @@ https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_trainable_s
 #sphx-glr-auto-examples-segmentation-plot-trainable-segmentation-py
 """
 
-from copyreg import pickle
-from fileinput import filename
 import os
 import time
 import joblib

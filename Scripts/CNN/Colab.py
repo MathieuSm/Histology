@@ -3,14 +3,15 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
-from skimage import io
 from pathlib import Path
 from patchify import patchify
 from matplotlib import pyplot as plt
 from sklearn.utils import class_weight
-from tensorflow.keras import backend as K
+from tensorflow.keras.metrics import MeanIoU
+from skimage import io, transform, morphology
 from tensorflow.keras import layers, utils, Model
 from sklearn.model_selection import train_test_split
+from focal_loss import SparseCategoricalFocalLoss as SFL
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
@@ -65,68 +66,22 @@ def BuildUNet(InputShape, nClasses, nFilters=[12, 32, 64, 128, 256], DropRates=[
     Outputs = layers.Conv2D(nClasses, 1, padding="same", activation=Activation)(D)
     UNet = Model(Input, Outputs, name='U-Net')
     return UNet
-def categorical_focal_loss(alpha, gamma=2.):
-    """
-    Softmax version of focal loss.
-    When there is a skew between different categories/labels in your data set, you can try to apply this function as a
-    loss.
-           m
-      FL = ∑  -alpha * (1 - p_o,c)^gamma * y_o,c * log(p_o,c)
-          c=1
-      where m = number of classes, c = class and o = observation
-    Parameters:
-      alpha -- the same as weighing factor in balanced cross entropy. Alpha is used to specify the weight of different
-      categories/labels, the size of the array needs to be consistent with the number of classes.
-      gamma -- focusing parameter for modulating factor (1-p)
-    Default value:
-      gamma -- 2.0 as mentioned in the paper
-      alpha -- 0.25 as mentioned in the paper
-    References:
-        Official paper: https://arxiv.org/pdf/1708.02002.pdf
-        https://www.tensorflow.org/api_docs/python/tf/keras/backend/categorical_crossentropy
-    Usage:
-     model.compile(loss=[categorical_focal_loss(alpha=[[.25, .25, .25]], gamma=2)], metrics=["accuracy"], optimizer=adam)
-    """
-
-    alpha = np.array(alpha, dtype=np.float32)
-
-    def categorical_focal_loss_fixed(y_true, y_pred):
-        """
-        :param y_true: A tensor of the same shape as `y_pred`
-        :param y_pred: A tensor resulting from a softmax
-        :return: Output tensor.
-        """
-
-        # Clip the prediction value to prevent NaN's and Inf's
-        epsilon = K.epsilon()
-        y_pred = K.clip(y_pred, epsilon, 1. - epsilon)
-
-        # Calculate Cross Entropy
-        cross_entropy = -y_true * K.log(y_pred)
-
-        # Calculate Focal Loss
-        loss = alpha * K.pow(1 - y_pred, gamma) * cross_entropy
-
-        # Compute mean loss in mini_batch
-        return K.mean(K.sum(loss, axis=-1))
-
-    return categorical_focal_loss_fixed
 def PlotHistory(History):
 
     Loss = History.history['loss']
     ValLoss = History.history['val_loss']
     Figure, Axis = plt.subplots(1, 1)
-    Axis.plot(range(1, len(Loss) + 1), Loss, color=(0, 0, 1), marker='o', linestyle='--', label='Training loss')
+    Axis.plot(range(1, len(Loss) + 1), Loss, color=(0, 1, 1), marker='o', linestyle='--', label='Training loss')
     Axis.plot(range(1, len(Loss) + 1), ValLoss, color=(1, 0, 0), marker='o', linestyle='--', label='Validation loss')
     Axis.set_xlabel('Epochs')
     Axis.set_ylabel('Loss')
     Axis.legend()
     plt.show()
 
-    Accuracy = History.history['accuracy']
-    ValAccuracy = History.history['val_accuracy']
+    Accuracy = History.history['categorical_accuracy']
+    ValAccuracy = History.history['val_categorical_accuracy']
     Figure, Axis = plt.subplots(1, 1)
-    Axis.plot(range(1, len(Accuracy) + 1), Accuracy, color=(0, 0, 1), marker='o', linestyle='--', label='Training accuracy')
+    Axis.plot(range(1, len(Accuracy) + 1), Accuracy, color=(0, 1, 1), marker='o', linestyle='--', label='Training accuracy')
     Axis.plot(range(1, len(Accuracy) + 1), ValAccuracy, color=(1, 0, 0), marker='o', linestyle='--', label='Validation accuracy')
     Axis.set_xlabel('Epochs')
     Axis.set_ylabel('Accuracy')
@@ -168,7 +123,9 @@ for iPicture, Picture in enumerate(Pictures[1:]):
 
 Data = []
 Labels = []
-PatchSize = 256
+PatchSize = 512 
+# Resize images to have 256x256 shape if PatchSize is bigger than 256
+# -> solve memory issue
 for Key in PicturesData.keys():
 
     Picture = PicturesData[Key]['ROI']
@@ -184,8 +141,28 @@ for Key in PicturesData.keys():
     PatchedL = patchify(Padded, (PatchSize, PatchSize), step=PatchSize)
     for i in range(PatchedP.shape[0]):
         for j in range(PatchedP.shape[1]):
-                Data.append(PatchedP[i,j,0])
-                Labels.append(PatchedL[i,j])
+
+                if PatchSize > 256:
+                    ImageP = transform.resize(PatchedP[i,j,0], (256,256,Picture.shape[-1]), preserve_range=True)
+                    ImageP = np.round(ImageP).astype('uint8')
+                    ImageA = transform.resize(PatchedL[i,j], (256,256), anti_aliasing=False, order=0)
+                    ImageL = np.zeros(ImageA.shape)
+                    for v in np.unique(ImageA):
+                        Bin = ImageA == v
+                        if v == 1:
+                            Disk = 2
+                        else:
+                            Disk = 1
+                        Bin = morphology.binary_dilation(Bin, morphology.disk(Disk))
+                        Bin = morphology.binary_erosion(Bin, morphology.disk(1))
+                        ImageL[Bin] = v
+
+                else:
+                    ImageP = PatchedP[i,j,0]
+                    ImageL = PatchedL[i,j,0]
+
+                Data.append(ImageP)
+                Labels.append(ImageL)
 Data = np.array(Data)
 Labels = np.array(Labels)
 Labels = np.expand_dims(Labels,-1)
@@ -198,14 +175,6 @@ TrainX, TestX, TrainY, TestY = train_test_split(Data, Labels, random_state = 0)
 TrainYCat = utils.to_categorical(TrainY)
 TestYCat = utils.to_categorical(TestY)
 
-# Compute class weigths on training data
-CW = class_weight.compute_class_weight('balanced', classes=np.unique(TrainY), y=TrainY.ravel())
-CW = CW / np.sum(CW)
-
-# Build and fit UNet
-UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1]) 
-UNet.compile(optimizer='adam', loss=categorical_focal_loss(alpha=CW), metrics=['accuracy'])
-print(UNet.summary())
 
 #%%
 #Sanity check, view few mages
@@ -254,8 +223,8 @@ LabelsGenerator = ImageDataGenerator(**LabelsArgs)
 TrainDataGenerator = DataGenerator.flow(TrainX, seed=Seed)
 TestDataGenerator = DataGenerator.flow(TestX, seed=Seed)
 
-TrainLabelsGenerator = LabelsGenerator.flow(TrainYCat, seed=Seed)
-TestLabelsGenerator = LabelsGenerator.flow(TestYCat, seed=Seed)
+TrainLabelsGenerator = LabelsGenerator.flow(TrainY, seed=Seed)
+TestLabelsGenerator = LabelsGenerator.flow(TestY, seed=Seed)
 
 def MyGenerator(DataGenerator, LabelsGenerator):
     Generators = zip(DataGenerator, LabelsGenerator)
@@ -269,23 +238,31 @@ TestGenerator = MyGenerator(TestDataGenerator, TestLabelsGenerator)
 # Check augmented data
 D = TrainDataGenerator.next()
 L = TrainLabelsGenerator.next()
-Label = np.zeros((PatchSize, PatchSize))
-for i in range(1,L.shape[-1]):
-    Label += i*L[0,:,:,i]
 Figure, Axis = plt.subplots(1,2)
 Axis[0].imshow(np.round(D[0]*255).astype('uint8'))
 Axis[0].axis('Off')
-Axis[1].imshow(Label)
+Axis[1].imshow(L[0,:,:,0])
 Axis[1].axis('Off')
 plt.show()
 
+#%%
+# Compute class weigths on training data
+
+CW = class_weight.compute_class_weight('balanced', classes=np.unique(TrainY), y=TrainY.ravel())
 
 #%%
+# Build Unet
 
-# Fit model and plot history
-BatchSize = 16
+UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1], DropRates=[0.3,0.3,0.3,0.3,0.3])
+UNet.compile(optimizer='adam', loss=[SFL(gamma=2, class_weight=CW)], metrics=['categorical_accuracy'])
+print(UNet.summary())
+
+#%%
+# Fit Unet and plot history
+
+BatchSize = 24
 StepsPerEpoch = 3*(len(TrainX))//BatchSize
-History = UNet.fit(TrainGenerator, validation_data=TestGenerator, steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch, epochs=50)
+History = UNet.fit(TrainGenerator, validation_data=TestGenerator, steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch, epochs=600)
 # History = UNet.fit(TrainGenerator, validation_data=TestGenerator, epochs=50)
 UNet.save('Unet.hdf5')
 PlotHistory(History)
@@ -296,24 +273,20 @@ Random = np.random.randint(0, len(TestX)-1)
 TestImage = TestX[Random]
 TestLabel = TestY[Random]
 Prediction = UNet.predict(np.expand_dims(TestImage,0))
+PredictionClasses = np.argmax(Prediction,axis=-1)[0]
 
-Figure, Axis = plt.subplots(2,3)
-Axis[0,0].imshow(TestImage)
-Axis[0,0].set_title('Image')
-Axis[0,1].imshow(Prediction[0,:,:,0], cmap='binary_r')
-Axis[0,1].set_title('Interstitial')
-Axis[0,2].imshow(Prediction[0,:,:,1], cmap='binary_r')
-Axis[0,2].set_title('Cement lines')
-Axis[1,0].imshow(TestLabel[:,:,0])
-Axis[1,0].set_title('Labels')
-Axis[1,1].imshow(Prediction[0,:,:,2], cmap='binary_r')
-Axis[1,1].set_title('Osteocytes')
-Axis[1,2].imshow(Prediction[0,:,:,3], cmap='binary_r')
-Axis[1,2].set_title('Harvesian canals')
-for i in range(2):
-    for j in range(3):
-        Axis[i,j].axis('off')
+Figure, Axis = plt.subplots(1,3)
+Axis[0].imshow(TestImage)
+Axis[0].set_title('Image')
+Axis[1].imshow(TestLabel[:,:,0], vmin=0, vmax=3)
+Axis[1].set_title('Labels')
+Axis[2].imshow(PredictionClasses, vmin=0, vmax=3)
+Axis[2].set_title('Predicitons')
+for i in range(3):
+        Axis[i].axis('off')
 plt.tight_layout()
 plt.show()
+
+
 
 # %%
