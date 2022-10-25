@@ -1,6 +1,5 @@
 #%%
 
-from operator import truediv
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import numpy as np
@@ -8,6 +7,7 @@ from pathlib import Path
 from patchify import patchify
 from matplotlib import pyplot as plt
 from sklearn.utils import class_weight
+from tensorflow.keras import backend as K
 from tensorflow.keras.metrics import MeanIoU
 from skimage import io, transform, morphology
 from sklearn.model_selection import train_test_split
@@ -22,49 +22,132 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 #%%
 
-def ConvulationBlock(Input, nFilters, DropRate):
+def SegmentBone(Image):
+
+    """
+    Segment bone area using simple threshold
+    """
+
+    # Mark areas where there is bone
+    Filter1 = Image[:, :, 0] < 190
+    Filter2 = Image[:, :, 1] < 190
+    Filter3 = Image[:, :, 2] < 235
+    Bone = Filter1 & Filter2 & Filter3
+
+    # Erode and dilate to remove small bone parts
+    Bone = morphology.remove_small_objects(~Bone, 15)
+    Bone = morphology.binary_closing(Bone, morphology.disk(25))
+
+    return ~Bone
+def ConvulationBlock(Input, nFilters, DropRate, BatchNorm):
 
     Activation = 'relu'
 
     Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Input)
+    if BatchNorm:
+        layers.BatchNormalization(axis=-1)(Layer)
+    Layer = layers.Activation(Activation)(Layer)
+
+    Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Layer)
+    if BatchNorm:
+        layers.BatchNormalization(axis=-1)(Layer)
     Layer = layers.Activation(Activation)(Layer)
 
     if DropRate:
         Layer = layers.Dropout(DropRate)(Layer)
 
-    Layer = layers.Conv2D(nFilters, 3, padding="same", kernel_initializer='he_uniform')(Layer)
-    Layer = layers.Activation(Activation)(Layer)
-
     return Layer
-def EncoderBlock(Input, nFilters, DropRate):
-    Layer = ConvulationBlock(Input, nFilters, DropRate)
+def EncoderBlock(Input, nFilters, DropRate, BatchNorm):
+    Layer = ConvulationBlock(Input, nFilters, DropRate, BatchNorm)
     Pool = layers.MaxPool2D((2, 2))(Layer)
     return Layer, Pool
-def DecoderBlock(Input, SkipFeatures, nFilters, DropRate):
-    Layer = layers.Conv2DTranspose(nFilters, (2, 2), strides=2, padding="same")(Input)
-    Layer = layers.Concatenate()([Layer, SkipFeatures])
-    Layer = ConvulationBlock(Layer, nFilters, DropRate)
+def GatingSignal(Input, nFilters, BatchNorm):
+    """
+    Resize the down layer feature map into the same dimension as the up layer feature map
+    using 1x1 conv
+    :return: the gating feature map with the same dimension of the up layer feature map
+    """
+    Layer = layers.Conv2D(nFilters, (1, 1), padding='same')(Input)
+    if BatchNorm:
+        Layer = layers.BatchNormalization(axis=-1)(Layer)
+    Layer = layers.Activation('relu')(Layer)
     return Layer
-def BuildUNet(InputShape, nClasses, nFilters=[12, 32, 64, 128, 256], DropRates=[0.1,0.1,0.2,0.2,0.3]):
+def AttentionBlock(Layer, Gating, nFilters, BatchNorm):
+
+    LayerShape = K.int_shape(Layer)
+    GatingShape = K.int_shape(Gating)
+
+    # Same shape fot Layer signal as for Gating signal
+    Theta = layers.Conv2D(nFilters, (2,2), padding='same')(Layer)
+    ThetaShape = K.int_shape(Theta)
+
+    # Same nFilters for Gating signal as for Layer shape
+    Phi = layers.Conv2D(nFilters, (1,1), padding='same')(Gating)
+    Strides = (ThetaShape[1] // GatingShape[1], ThetaShape[2] // GatingShape[2])
+    Phi = layers.Conv2DTranspose(nFilters, (3,3), strides=Strides, padding='same')(Phi)
+
+    Psi = layers.add([Phi, Theta])
+    Psi = layers.Activation('relu')(Psi)
+    Psi = layers.Conv2D(1, (1,1), padding='same')(Psi)
+    Psi = layers.Activation('softmax')(Psi)
+    PsiShape = K.int_shape(Psi)
+    Size = (LayerShape[1] // PsiShape[1], LayerShape[2] // PsiShape[2])
+    Psi = layers.UpSampling2D(size=Size)(Psi)
+    Psi = K.repeat_elements(Psi, LayerShape[-1], axis=-1)
+    AttentionLayer = layers.multiply([Psi, Layer])
+
+    AttentionLayer = layers.Conv2D(LayerShape[-1], (1,1), padding='same')(AttentionLayer)
+
+    if BatchNorm:
+        AttentionLayer = layers.BatchNormalization(axis=-1)(AttentionLayer)
+
+    return AttentionLayer
+def DecoderBlock(Input, SkipFeatures, nFilters, DropRate, BatchNorm, Type='Standard'):
+
+    if Type == 'Standard':
+        Layer = layers.Conv2DTranspose(nFilters, (2, 2), strides=2, padding="same")(Input)
+    elif Type == 'Attention':
+        Layer = layers.UpSampling2D((2,2), data_format='channels_last')(Input)
+    Layer = layers.Concatenate()([Layer, SkipFeatures])
+    Layer = ConvulationBlock(Layer, nFilters, DropRate, BatchNorm)
+    return Layer
+def BuildUNet(InputShape, nClasses, nFilters=[12, 32, 64, 128, 256], DropRates=[0.1,0.1,0.2,0.2,0.3], BatchNorm=True, Type='Standard'):
 
     Input = layers.Input(InputShape)
     Block = []
-    Block.append(EncoderBlock(Input, nFilters[0], DropRates[0]))
+    Block.append(EncoderBlock(Input, nFilters[0], DropRates[0], BatchNorm))
     for i, nFilter in enumerate(nFilters[1:-1]):
-        Block.append(EncoderBlock(Block[i][1], nFilter, DropRates[i+1]))
+        Block.append(EncoderBlock(Block[i][1], nFilter, DropRates[i+1], BatchNorm))
 
-    Bridge = ConvulationBlock(Block[-1][1], nFilters[-1], DropRates[-1])
-    D = DecoderBlock(Bridge, Block[-1][0], nFilters[-2], DropRates[-2])
+    Bridge = ConvulationBlock(Block[-1][1], nFilters[-1], DropRates[-1], BatchNorm)
+
+    if Type == 'Standard':
+        SkipFeatures = Block[-1][0]
+    elif Type == 'Attention':
+        Gating = GatingSignal(Bridge, nFilters[-2], BatchNorm)
+        SkipFeatures = AttentionBlock(Block[-1][0], Gating, nFilters[-2], BatchNorm)
+
+    D = DecoderBlock(Bridge, SkipFeatures, nFilters[-2], DropRates[-2], BatchNorm)
 
     for i, nFilter in enumerate(nFilters[-3::-1]):
-        D = DecoderBlock(D, Block[-i+2][0], nFilter, DropRates[-i+2])
+
+        if Type == 'Standard':
+            SkipFeatures = Block[-i+2][0]
+        elif Type == 'Attention':
+            Gating = GatingSignal(Bridge, nFilter, BatchNorm)
+            SkipFeatures = AttentionBlock(Block[-i+2][0], Gating, nFilter, BatchNorm)
+
+        D = DecoderBlock(D, SkipFeatures, nFilter, DropRates[-i+2], BatchNorm)
 
     if nClasses == 2:  #Binary
       Activation = 'sigmoid'
     else:
       Activation = 'softmax'
 
-    Outputs = layers.Conv2D(nClasses, 1, padding="same", activation=Activation)(D)
+    Outputs = layers.Conv2D(nClasses, 1, padding="same")(D)
+    if BatchNorm:
+        Outputs = layers.BatchNormalization(axis=-1)(Outputs)
+    Outputs = layers.Activation(Activation)(Outputs)
     UNet = Model(Input, Outputs, name='U-Net')
     return UNet
 def PlotHistory(History):
@@ -169,10 +252,22 @@ Labels = np.array(Labels)
 Labels = np.expand_dims(Labels,-1)
 
 
+#%%
+# Filter data to remove too low BVTV areas
+FData = []
+FLabels = []
+for iImage, Image in enumerate(Data):
+    Bone = SegmentBone(Image)
+    BVTV = Bone.sum() / Bone.size
+    if BVTV > 0.88:
+        FData.append(Image)
+        FLabels.append(Labels[iImage])
+FData = np.array(FData)
+FLabels = np.array(FLabels)
 
 #%%
 # Separate into train and test data and build unet model
-TrainX, TestX, TrainY, TestY = train_test_split(Data, Labels, random_state = 0)
+TrainX, TestX, TrainY, TestY = train_test_split(FData, FLabels, random_state = 0)
 TrainYCat = utils.to_categorical(TrainY)
 TestYCat = utils.to_categorical(TestY)
 
@@ -242,7 +337,7 @@ L = TrainLabelsGenerator.next()
 Figure, Axis = plt.subplots(1,2)
 Axis[0].imshow(np.round(D[0]*255).astype('uint8'))
 Axis[0].axis('Off')
-Axis[1].imshow(L[0,:,:,0])
+Axis[1].imshow(np.sum(L[0], axis=-1))
 Axis[1].axis('Off')
 plt.show()
 
@@ -254,7 +349,7 @@ CW = class_weight.compute_class_weight('balanced', classes=np.unique(TrainY), y=
 #%%
 # Build Unet
 
-UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1], DropRates=[0.3,0.3,0.3,0.3,0.3])
+UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1], DropRates=[0.3,0.3,0.3,0.3,0.3], Type='Standard')
 UNet.compile(optimizer='adam', loss=[SFL(gamma=2, class_weight=CW)], metrics=['categorical_accuracy'])
 print(UNet.summary())
 
@@ -262,16 +357,16 @@ print(UNet.summary())
 # Set callbacks
 File = Path('Models', 'UNet_{epoch:04d}_{val_categorical_accuracy:.3f}.hdf5')
 CP = callbacks.ModelCheckpoint(str(File), monitor='val_categorical_accuracy', verbose=1, save_best_only=True, mode='max')
-ES = callbacks.EarlyStopping(monitor='val_loss', patience=500, verbose=1, mode='min', restore_best_weights=True)
+ES = callbacks.EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min', restore_best_weights=True)
 Callbacks = [CP,ES]
 #%%
 # Fit Unet and plot history
 
-BatchSize = 24
-StepsPerEpoch = 12 #3*(len(TrainX))//BatchSize
+BatchSize = 32
+StepsPerEpoch = 16 #3*(len(TrainX))//BatchSize
 History = UNet.fit(TrainGenerator, validation_data=TestGenerator,
                    steps_per_epoch=StepsPerEpoch, validation_steps=StepsPerEpoch,
-                   epochs=2000, callbacks=Callbacks)
+                   epochs=20, callbacks=Callbacks)
 # History = UNet.fit(TrainGenerator, validation_data=TestGenerator, epochs=50)
 UNet.save('Unet.hdf5')
 PlotHistory(History)
