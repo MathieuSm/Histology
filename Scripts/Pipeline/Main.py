@@ -765,8 +765,8 @@ for iS, Sample in enumerate(SamplesFeatures):
         # File for saving image
         FilePath = Path(Arguments.Path, 'SegmentationResults')
         FileName = str(FilePath / str(Name[:-4] + '_' + str(iROI + 1) + '.png'))
-        PlotImage(ROI,FileName, ShowPlot=False)
-        PlotOverlay(ROI, Results, FileName, ShowPlot=False)
+        # PlotImage(ROI,FileName, ShowPlot=False)
+        # PlotOverlay(ROI, Results, FileName, ShowPlot=False)
 
         # Compute different variables
         On = np.max(measure.label(Results == 3))

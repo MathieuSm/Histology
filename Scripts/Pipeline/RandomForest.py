@@ -253,7 +253,7 @@ def ExtractFeatures(ROIsArray, Channels=['HSV'], Features=['E', 'H1', 'H2'], SRa
             elif Channel == 'Lab':
                 P = color.rgb2lab(ROI)
 
-            ROIFeatures[:,:,i:j] = mbf(P, multichannel=True, intensity=I, edges=E, texture=T,
+            ROIFeatures[:,:,i:j] = mbf(P, channel_axis=-1, intensity=I, edges=E, texture=T,
                                        sigma_min=SRange[0], sigma_max=SRange[1], num_sigma=NumSigma)
             i += nFeatures
             j += nFeatures
@@ -1092,3 +1092,4 @@ def Divers():
     PlotResults(Test['ROI_3']['ROI'], np.reshape(Results,Test['ROI_3']['Labels'].shape))
 
     return None
+# %%

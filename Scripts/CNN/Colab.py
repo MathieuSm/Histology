@@ -162,8 +162,8 @@ def PlotHistory(History):
     Axis.legend()
     plt.show()
 
-    Accuracy = History.history['categorical_accuracy']
-    ValAccuracy = History.history['val_categorical_accuracy']
+    Accuracy = History.history['accuracy']
+    ValAccuracy = History.history['val_accuracy']
     Figure, Axis = plt.subplots(1, 1)
     Axis.plot(range(1, len(Accuracy) + 1), Accuracy, color=(0, 1, 1), marker='o', linestyle='--', label='Training accuracy')
     Axis.plot(range(1, len(Accuracy) + 1), ValAccuracy, color=(1, 0, 0), marker='o', linestyle='--', label='Validation accuracy')
@@ -349,15 +349,15 @@ CW = class_weight.compute_class_weight('balanced', classes=np.unique(TrainY), y=
 #%%
 # Build Unet
 
-UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1], DropRates=[0.3,0.3,0.3,0.3,0.3], Type='Standard')
-UNet.compile(optimizer='adam', loss=[SFL(gamma=2, class_weight=CW)], metrics=['categorical_accuracy'])
+UNet = BuildUNet(Data.shape[1:],TrainYCat.shape[-1], DropRates=[0.25,0.25,0.25,0.25,0.25], Type='Standard')
+UNet.compile(optimizer='adam', loss=[SFL(gamma=3, class_weight=[0, 1/3, 1/3, 1/3])], metrics=['accuracy'])
 print(UNet.summary())
 
 #%%
 # Set callbacks
-File = Path('Models', 'UNet_{epoch:04d}_{val_categorical_accuracy:.3f}.hdf5')
-CP = callbacks.ModelCheckpoint(str(File), monitor='val_categorical_accuracy', verbose=1, save_best_only=True, mode='max')
-ES = callbacks.EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min', restore_best_weights=True)
+File = Path('Models', 'UNet_{epoch:04d}_{val_accuracy:.3f}.hdf5')
+CP = callbacks.ModelCheckpoint(str(File), monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
+ES = callbacks.EarlyStopping(monitor='val_loss', patience=5, verbose=1, mode='min')
 Callbacks = [CP,ES]
 #%%
 # Fit Unet and plot history
@@ -376,15 +376,18 @@ PlotHistory(History)
 Random = np.random.randint(0, len(TestX)-1)
 TestImage = TestX[Random]
 TestLabel = TestY[Random]
+
+# Load best weigths and look at prediction
+UNet.load_weights('Models/UNet_0009_0.542.hdf5')
 Prediction = UNet.predict(np.expand_dims(TestImage,0))
 PredictionClasses = np.argmax(Prediction,axis=-1)[0]
 
 Figure, Axis = plt.subplots(1,3)
 Axis[0].imshow(TestImage)
 Axis[0].set_title('Image')
-Axis[1].imshow(TestLabel[:,:,0], vmin=0, vmax=3)
+Axis[1].imshow(TestLabel[:,:,0], vmin=0, vmax=3, interpolation='none')
 Axis[1].set_title('Labels')
-Axis[2].imshow(PredictionClasses, vmin=0, vmax=3)
+Axis[2].imshow(PredictionClasses, vmin=0, vmax=3, interpolation='none')
 Axis[2].set_title('Predicitons')
 for i in range(3):
         Axis[i].axis('off')
